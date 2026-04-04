@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package pb_user;
+
+option go_package = "go-im-system/apps/pkg/proto/pb_user";
+
+// 登录请求
+message UserLoginArgs {
+  int64 user_id = 1;
+  string user_name = 2;
+  string password = 3;
+}
+
+// 登录响应
+message UserLoginReply {
+  int64 user_id = 1;
+  string token = 2;
+}
+
+// 注册请求
+message UserRegisterArgs {
+  int64 user_id = 1;
+  string user_name = 2;
+  string password = 3;
+  string nickname = 4;
+  string avatar = 5;
+}
+
+// 注册响应
+message UserRegisterReply {
+  bool success = 1;
+}
+
