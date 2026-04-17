@@ -7,7 +7,7 @@ import (
 	"go-im-system/apps/logic/dao"
 	"go-im-system/apps/logic/models"
 	"go-im-system/apps/pkg/cache"
-	"log"
+	"go-im-system/apps/pkg/logger"
 )
 
 const batch = 100
@@ -17,7 +17,7 @@ func StartCronJobs() {
 	// 每分钟的第 0 秒执行一次
 	_, err := c.AddFunc("0 * * * * *", handleScheduledMessages)
 	if err != nil {
-		log.Fatalf("启动定时任务失败: %v", err)
+		logger.Log.Fatalf("启动定时任务失败: %v", err)
 	}
 	c.Start()
 }
@@ -65,6 +65,6 @@ func SendSchMessages(task *models.ScheduledMessages) {
 	ctx := context.Background()
 	pubSubChannel := fmt.Sprintf("ai:chunk:user:%d", task.CreatorId)
 
-	cache.RedisClient.Publish(ctx, pubSubChannel, feedback)
-	cache.RedisClient.Publish(ctx, pubSubChannel, "[DONE]")
+	cache.GetCache().Publish(ctx, pubSubChannel, feedback)
+	cache.GetCache().Publish(ctx, pubSubChannel, "[DONE]")
 }

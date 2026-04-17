@@ -4,6 +4,7 @@ import (
 	"GeeRPC/xclient"
 	"github.com/gin-gonic/gin"
 	"go-im-system/apps/gateway/rpcclient"
+	"go-im-system/apps/pkg/logger"
 	"go-im-system/apps/pkg/proto/pb_user"
 	"golang.org/x/net/context"
 	"log"
@@ -87,7 +88,7 @@ func UserRegisterHandler(c *gin.Context) {
 	// 调用逻辑层后端服务
 	err := rpcclient.LogicRpcClient.Call(ctx, "LogicService.UserRegister", rpcArgs, rpcReply)
 	if err != nil {
-		log.Printf("内部 RPC 调用失败: %v", err)
+		logger.Log.Errorf("内部 RPC 调用失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "系统繁忙"})
 		return
 	}

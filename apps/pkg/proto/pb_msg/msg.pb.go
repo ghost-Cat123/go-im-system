@@ -383,6 +383,97 @@ func (x *ReadMessagesReply) GetSuccess() bool {
 	return false
 }
 
+// 读消息ACK
+type AckMessageArgs struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	MsgId int64 `protobuf:"varint,1,opt,name=msg_id,json=msgId,proto3" json:"msg_id,omitempty"`
+}
+
+func (x *AckMessageArgs) Reset() {
+	*x = AckMessageArgs{}
+	mi := &file_apps_pkg_proto_pb_msg_msg_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AckMessageArgs) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AckMessageArgs) ProtoMessage() {}
+
+func (x *AckMessageArgs) ProtoReflect() protoreflect.Message {
+	mi := &file_apps_pkg_proto_pb_msg_msg_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AckMessageArgs.ProtoReflect.Descriptor instead.
+func (*AckMessageArgs) Descriptor() ([]byte, []int) {
+	return file_apps_pkg_proto_pb_msg_msg_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *AckMessageArgs) GetMsgId() int64 {
+	if x != nil {
+		return x.MsgId
+	}
+	return 0
+}
+
+type AckMessageReply struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+}
+
+func (x *AckMessageReply) Reset() {
+	*x = AckMessageReply{}
+	mi := &file_apps_pkg_proto_pb_msg_msg_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AckMessageReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AckMessageReply) ProtoMessage() {}
+
+func (x *AckMessageReply) ProtoReflect() protoreflect.Message {
+	mi := &file_apps_pkg_proto_pb_msg_msg_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AckMessageReply.ProtoReflect.Descriptor instead.
+func (*AckMessageReply) Descriptor() ([]byte, []int) {
+	return file_apps_pkg_proto_pb_msg_msg_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *AckMessageReply) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
 var File_apps_pkg_proto_pb_msg_msg_proto protoreflect.FileDescriptor
 
 var file_apps_pkg_proto_pb_msg_msg_proto_rawDesc = []byte{
@@ -419,9 +510,15 @@ var file_apps_pkg_proto_pb_msg_msg_proto_rawDesc = []byte{
 	0x72, 0x49, 0x64, 0x22, 0x2d, 0x0a, 0x11, 0x52, 0x65, 0x61, 0x64, 0x4d, 0x65, 0x73, 0x73, 0x61,
 	0x67, 0x65, 0x73, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x12, 0x18, 0x0a, 0x07, 0x73, 0x75, 0x63, 0x63,
 	0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x08, 0x52, 0x07, 0x73, 0x75, 0x63, 0x63, 0x65,
-	0x73, 0x73, 0x42, 0x24, 0x5a, 0x22, 0x67, 0x6f, 0x2d, 0x69, 0x6d, 0x2d, 0x73, 0x79, 0x73, 0x74,
-	0x65, 0x6d, 0x2f, 0x61, 0x70, 0x70, 0x73, 0x2f, 0x70, 0x6b, 0x67, 0x2f, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x2f, 0x70, 0x62, 0x5f, 0x6d, 0x73, 0x67, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x73, 0x73, 0x22, 0x27, 0x0a, 0x0e, 0x61, 0x63, 0x6b, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65,
+	0x41, 0x72, 0x67, 0x73, 0x12, 0x15, 0x0a, 0x06, 0x6d, 0x73, 0x67, 0x5f, 0x69, 0x64, 0x18, 0x01,
+	0x20, 0x01, 0x28, 0x03, 0x52, 0x05, 0x6d, 0x73, 0x67, 0x49, 0x64, 0x22, 0x2b, 0x0a, 0x0f, 0x61,
+	0x63, 0x6b, 0x4d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x52, 0x65, 0x70, 0x6c, 0x79, 0x12, 0x18,
+	0x0a, 0x07, 0x73, 0x75, 0x63, 0x63, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x08, 0x52,
+	0x07, 0x73, 0x75, 0x63, 0x63, 0x65, 0x73, 0x73, 0x42, 0x24, 0x5a, 0x22, 0x67, 0x6f, 0x2d, 0x69,
+	0x6d, 0x2d, 0x73, 0x79, 0x73, 0x74, 0x65, 0x6d, 0x2f, 0x61, 0x70, 0x70, 0x73, 0x2f, 0x70, 0x6b,
+	0x67, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x2f, 0x70, 0x62, 0x5f, 0x6d, 0x73, 0x67, 0x62, 0x06,
+	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -436,7 +533,7 @@ func file_apps_pkg_proto_pb_msg_msg_proto_rawDescGZIP() []byte {
 	return file_apps_pkg_proto_pb_msg_msg_proto_rawDescData
 }
 
-var file_apps_pkg_proto_pb_msg_msg_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_apps_pkg_proto_pb_msg_msg_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_apps_pkg_proto_pb_msg_msg_proto_goTypes = []any{
 	(*SendMessageArgs)(nil),   // 0: pb_msg.SendMessageArgs
 	(*SendMessageReply)(nil),  // 1: pb_msg.SendMessageReply
@@ -445,6 +542,8 @@ var file_apps_pkg_proto_pb_msg_msg_proto_goTypes = []any{
 	(*MessageItem)(nil),       // 4: pb_msg.MessageItem
 	(*ReadMessagesArgs)(nil),  // 5: pb_msg.ReadMessagesArgs
 	(*ReadMessagesReply)(nil), // 6: pb_msg.ReadMessagesReply
+	(*AckMessageArgs)(nil),    // 7: pb_msg.ackMessageArgs
+	(*AckMessageReply)(nil),   // 8: pb_msg.ackMessageReply
 }
 var file_apps_pkg_proto_pb_msg_msg_proto_depIdxs = []int32{
 	4, // 0: pb_msg.SyncUnreadReply.messages:type_name -> pb_msg.MessageItem
@@ -466,7 +565,7 @@ func file_apps_pkg_proto_pb_msg_msg_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_apps_pkg_proto_pb_msg_msg_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

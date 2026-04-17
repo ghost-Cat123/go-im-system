@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package pb_msg;
 
-//    protoc --go_out=. --go_opt=module=go-im-system apps/pkg/proto/pb_user/user.proto
+// protoc --go_out=. --go_opt=module=go-im-system apps/pkg/proto/pb_msg/msg.proto
 option go_package = "go-im-system/apps/pkg/proto/pb_msg";
 
 // 发送消息请求
@@ -45,4 +45,13 @@ message ReadMessagesArgs {
 // 读消息列表响应
 message ReadMessagesReply {
   bool success = 1;        // 返回个 true 就行
+}
+
+// 读消息ACK
+message ackMessageArgs {
+  int64 msg_id = 1;
+}
+
+message ackMessageReply {
+  bool success = 1;
 }

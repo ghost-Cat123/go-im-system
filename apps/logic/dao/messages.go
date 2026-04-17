@@ -7,19 +7,26 @@ import (
 )
 
 func InsertMessage(message *models.Messages) error {
-	err := db.DB.Create(message).Error
+	err := db.GetDB().Create(message).Error
 	return err
 }
 
 func GetUnreadMessages(receiverId int64) ([]models.Messages, error) {
 	var messages []models.Messages
-	result := db.DB.Where("receiver_id = ? AND is_read = ?", receiverId, false).Find(&messages)
+	result := db.GetDB().Where("receiver_id = ? AND is_read = ?", receiverId, false).Find(&messages)
 	return messages, result.Error
 }
 
-func MarkMessageAsRead(receiverId int64) error {
-	result := db.DB.Model(&models.Messages{}).
+func MarkMessagesAsRead(receiverId int64) error {
+	result := db.GetDB().Model(&models.Messages{}).
 		Where("receiver_id = ? AND is_read = ?", receiverId, false).
+		Update("is_read", true)
+	return result.Error
+}
+
+func MarkMessageAsRead(msgId int64) error {
+	result := db.GetDB().Model(&models.Messages{}).
+		Where("msg_id = ? AND is_read = ?", msgId, false).
 		Update("is_read", true)
 	return result.Error
 }
@@ -40,6 +47,6 @@ func GetHistoryBetweenUsers(uid1, uid2 int64, startTime, endTime time.Time, limi
 		ORDER BY create_time DESC 
 		LIMIT ?
 	`
-	result := db.DB.Raw(sql, uid1, uid2, uid2, uid1, startTime, endTime, limit).Scan(&messages)
+	result := db.GetDB().Raw(sql, uid1, uid2, uid2, uid1, startTime, endTime, limit).Scan(&messages)
 	return messages, result.Error
 }

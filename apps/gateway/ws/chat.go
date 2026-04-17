@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/websocket"
 	"go-im-system/apps/gateway/rpcclient"
+	"go-im-system/apps/pkg/logger"
 	"go-im-system/apps/pkg/proto/pb_msg"
 	"log"
 	"strconv"
@@ -14,7 +16,7 @@ import (
 func handleSingleChat(messageType int, senderId int64, msgData []byte) {
 	var clientReq ClientRequest // 你的单聊专属结构体
 	if err := json.Unmarshal(msgData, &clientReq); err != nil {
-		log.Printf("JSON解析失败: %v", err)
+		logger.Log.Errorf("JSON解析失败: %v", err)
 	}
 
 	// 2. 构造 pb.SendMessageArgs
@@ -44,5 +46,37 @@ func handleSingleChat(messageType int, senderId int64, msgData []byte) {
 	} else {
 		// 目标用户不在线
 		log.Printf("用户 [%d] 不在线，消息已由 Logic 存入离线库", clientReq.Receiver)
+	}
+}
+
+func handleAck(userId int64, msgData []byte) {
+	// 1. 解析前端参数
+	var ackReq struct {
+		MsgId int64 `json:"msg_id"`
+		// 需要通知发送者id
+		SenderId int64 `json:"sender_id"`
+	}
+	if err := json.Unmarshal(msgData, &ackReq); err != nil {
+		log.Println("ACK 参数解析失败", err)
+		return
+	}
+	// 2. 调用Logic层RPC 标记为已读
+	ackMessageArgs := &pb_msg.AckMessageArgs{
+		MsgId: ackReq.MsgId,
+	}
+	ackMessageReply := &pb_msg.AckMessageReply{}
+
+	err := rpcclient.LogicRpcClient.Call(context.Background(), "LogicService.AckMessage", ackMessageArgs, ackMessageReply)
+	if err != nil {
+		log.Printf("更新已读状态失败: %v", err)
+		return
+	}
+
+	// 3. 通知发送者
+	if senderConn, ok := GlobalCliMap.Get(strconv.FormatInt(ackReq.SenderId, 10)); ok {
+		ackMsg := fmt.Sprintf(`{"chat_type": "ack", "read_receipt": %d, "msg_id": %d}`, userId, ackReq.MsgId)
+		// 发送给目标用户的物理连接
+		_ = senderConn.WriteMessage(websocket.TextMessage, []byte(ackMsg))
+		log.Printf("ACK成功发送给 [%d]", ackReq.SenderId)
 	}
 }

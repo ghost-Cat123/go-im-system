@@ -8,8 +8,8 @@ import (
 	"go-im-system/apps/logic/dao"
 	"go-im-system/apps/logic/models"
 	"go-im-system/apps/pkg/cache"
+	"go-im-system/apps/pkg/logger"
 	"io"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +17,11 @@ import (
 
 func HandlerAIMessage(senderId int64, content string) {
 	ctx := context.Background()
+
+	// 将 senderId 塞进 Context 的大动脉里！
+	// 这样底层的 RateLimitMiddleware 和 Tools 就能通过 ctx.Value 拿到了
+	ctx = context.WithValue(ctx, "current_user_id", senderId)
+
 	sessionID := "agent_session:" + strconv.FormatInt(senderId, 10)
 
 	// 1. 调用Eino 返回channel (存储的AI回应)
@@ -31,7 +36,7 @@ func HandlerAIMessage(senderId int64, content string) {
 	// 存入session
 	err := session.Append(ctx, userMsg)
 	if err != nil {
-		log.Printf("无法存入session: %v", err)
+		logger.Log.Errorf("无法存入session: %v", err)
 		return
 	}
 	// 构建[]*schema.Message列表
@@ -44,15 +49,15 @@ func HandlerAIMessage(senderId int64, content string) {
 	// 2. 循环读channel 并推入Redis
 	for chunkText := range outStream {
 		fullText += chunkText
-		cache.RedisClient.Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), chunkText)
+		cache.GetCache().Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), chunkText)
 	}
 	// 3. 发布结束符告诉前端 AI生成完毕
-	cache.RedisClient.Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), "[DONE]")
+	cache.GetCache().Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), "[DONE]")
 	// 4. 存储AI消息到session
 	assistantMsg := schema.AssistantMessage(fullText, nil)
 	err = session.Append(ctx, assistantMsg)
 	if err != nil {
-		log.Printf("无法存入session: %v", err)
+		logger.Log.Errorf("无法存入session: %v", err)
 		return
 	}
 
@@ -73,7 +78,7 @@ func getAssistantFromEvents(events *adk.AsyncIterator[*adk.AgentEvent]) (<-chan 
 				break
 			}
 			if event.Err != nil {
-				log.Printf("AI 事件流解析报错: %v", event.Err)
+				logger.Log.Errorf("AI 事件流解析报错: %v", event.Err)
 			}
 			// 消息为空
 			if event.Output == nil || event.Output.MessageOutput == nil {
@@ -94,7 +99,7 @@ func getAssistantFromEvents(events *adk.AsyncIterator[*adk.AgentEvent]) (<-chan 
 						break
 					}
 					if err != nil {
-						log.Printf("接收流式帧报错: %v", err)
+						logger.Log.Errorf("接收流式帧报错: %v", err)
 						break
 					}
 					if frame != nil && frame.Content != "" {

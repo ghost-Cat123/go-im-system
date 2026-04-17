@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go-im-system/apps/gateway/rpcclient"
 	"go-im-system/apps/pkg/cache"
+	"go-im-system/apps/pkg/logger"
 	"go-im-system/apps/pkg/proto/pb_msg"
 	"go-im-system/apps/pkg/utils"
 	"log"
@@ -65,7 +66,7 @@ func WSHandler(c *gin.Context) {
 	ctx := context.Background()
 	redisKey := "route:user:" + userIDStr
 	gatewayAddr := "127.0.0.1:8080"
-	err = cache.RedisClient.Set(ctx, redisKey, gatewayAddr, time.Hour*24).Err()
+	err = cache.GetCache().Set(ctx, redisKey, gatewayAddr, time.Hour*24).Err()
 	if err != nil {
 		log.Printf("Redis 路由写入失败: %v", err)
 	}
@@ -113,7 +114,7 @@ func subscribeAILoop(userIDStr string, conn *websocket.Conn) {
 	// 频道名要和发布时一致
 	pubSubChannel := "ai:chunk:user:" + userIDStr
 	// 1. 开启订阅
-	pubSub := cache.RedisClient.Subscribe(ctx, pubSubChannel)
+	pubSub := cache.GetCache().Subscribe(ctx, pubSubChannel)
 	// 2. 协程退出 关闭订阅 释放Redis连接
 	defer func() {
 		_ = pubSub.Close()
@@ -148,16 +149,16 @@ func readLoop(userID int64, conn *websocket.Conn) {
 	userIDStr := strconv.FormatInt(userID, 10)
 	// 连接断开时的清理工作
 	defer func() {
-		log.Printf("用户 [%d] 断开连接", userID)
+		logger.Log.Infof("用户 [%d] 断开连接", userID)
 		// 1. 本地连接池移除该用户的连接
 		GlobalCliMap.Delete(userIDStr)
 		// 2. 从 Redis 路由表清理 (宣告全网该用户离线)
 		ctx := context.Background()
 		redisKey := "route:user:" + userIDStr
-		cache.RedisClient.Del(ctx, redisKey)
+		cache.GetCache().Del(ctx, redisKey)
 		err := conn.Close()
 		if err != nil {
-			log.Printf("用户 [%d] 连接关闭失败", userID)
+			logger.Log.Errorf("用户 [%d] 连接关闭失败", userID)
 			return
 		}
 	}()
@@ -165,7 +166,7 @@ func readLoop(userID int64, conn *websocket.Conn) {
 	for {
 		messageType, msgData, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("读取消息失败或用户掉线: %v", err)
+			logger.Log.Errorf("读取消息失败或用户掉线: %v", err)
 			break
 		}
 		// 解析基础包，只看 action 是什么
@@ -182,7 +183,7 @@ func readLoop(userID int64, conn *websocket.Conn) {
 			ctx := context.Background()
 			redisKey := "route:user:" + userIDStr
 			// 重新设置30s过期时间
-			cache.RedisClient.Expire(ctx, redisKey, time.Second*30)
+			cache.GetCache().Expire(ctx, redisKey, time.Second*30)
 			// 给前端发送响应
 			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"action":"pong"}`))
 		case "single_chat":
@@ -190,12 +191,10 @@ func readLoop(userID int64, conn *websocket.Conn) {
 		case "group_chat":
 			// handleGroupChat(userID, msgData)  // 调群聊函数
 		case "ack":
-			// handleAck(userID, msgData)        // 调已读确认函数
-		case "heartbeat":
-			// 处理心跳
+			handleAck(userID, msgData) // 调已读确认函数
 		default:
-			log.Println("未知动作", baseReq.ChatType)
+			logger.Log.Info("未知动作", baseReq.ChatType)
 		}
-		log.Printf("收到用户 [%d] 的消息: %s", userID, string(msgData))
+		logger.Log.Infof("收到用户 [%d] 的消息: %s", userID, string(msgData))
 	}
 }

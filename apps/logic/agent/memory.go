@@ -38,7 +38,7 @@ func (s *Session) Append(ctx context.Context, msg *schema.Message) error {
 	if err != nil {
 		return err
 	}
-	pipe := cache.RedisClient.Pipeline()
+	pipe := cache.GetCache().Pipeline()
 	pipe.RPush(ctx, s.Key, data)
 	// 滑动窗口截断模式 保留最新的20条对话
 	pipe.LTrim(ctx, s.Key, -20, -1)
@@ -49,7 +49,7 @@ func (s *Session) Append(ctx context.Context, msg *schema.Message) error {
 
 // GetMessages 读取全部对话 + 反序列化
 func (s *Session) GetMessages(ctx context.Context) ([]*schema.Message, error) {
-	strs, err := cache.RedisClient.LRange(ctx, s.Key, 0, -1).Result()
+	strs, err := cache.GetCache().LRange(ctx, s.Key, 0, -1).Result()
 	if err != nil {
 		return nil, err
 	}
