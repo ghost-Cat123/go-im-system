@@ -9,6 +9,7 @@ import (
 	"go-im-system/apps/pkg/config"
 	"go-im-system/apps/pkg/db"
 	"go-im-system/apps/pkg/logger"
+	"go-im-system/apps/pkg/utils"
 	"log"
 	"net"
 	"strconv"
@@ -16,7 +17,9 @@ import (
 
 func main() {
 	// 实际开发中，这个路径可以用命令行 flag 传进来，比如 -c ./config.yaml
-	config.InitConfig("../config.yaml")
+	if err := config.InitConfig(""); err != nil {
+		log.Fatalf("配置初始化失败: %v", err)
+	}
 
 	// 初始化生产级日志
 	logger.InitLogger()
@@ -32,6 +35,14 @@ func main() {
 	cacheInitErr := cache.InitRedis(config.GlobalConfig.Redis)
 	if cacheInitErr != nil {
 		logger.Log.Fatalf("连接缓存失败: %v", cacheInitErr)
+	}
+
+	logicSnow := config.GlobalConfig.Server.LogicSnowflakeNode
+	if logicSnow == 0 {
+		logicSnow = 2
+	}
+	if err := utils.InitSnowflake(int64(logicSnow)); err != nil {
+		logger.Log.Fatalf("Logic Snowflake 初始化失败: %v", err)
 	}
 
 	task.StartCronJobs()

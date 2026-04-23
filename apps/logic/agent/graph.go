@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"github.com/cloudwego/eino-ext/components/model/deepseek"
 	"github.com/cloudwego/eino/adk"
@@ -14,28 +13,50 @@ import (
 	"go-im-system/apps/logic/agent/middleware"
 	"go-im-system/apps/logic/agent/tools"
 	"go-im-system/apps/pkg/config"
+	"go-im-system/apps/pkg/logger"
 	"os"
 	"strings"
 )
 
-func GetAgentGraphRunner() *adk.Runner {
+func resolveAgentAPIKey(defaultAgent config.ProviderConfig) string {
+	if strings.TrimSpace(defaultAgent.APIKey) != "" {
+		return strings.TrimSpace(defaultAgent.APIKey)
+	}
+
+	defaultName := strings.ToUpper(strings.TrimSpace(config.GlobalConfig.Agent.Default))
+	if defaultName != "" {
+		// 支持 Viper 的层级环境变量写法：AGENT_PROVIDERS_DEEPSEEK_API_KEY
+		if key := strings.TrimSpace(os.Getenv("AGENT_PROVIDERS_" + defaultName + "_API_KEY")); key != "" {
+			return key
+		}
+	}
+
+	// 兼容常见命名
+	if key := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")); key != "" {
+		return key
+	}
+	return ""
+}
+
+func GetAgentGraphRunner() (*adk.Runner, error) {
 	defaultAgent := config.GetDefaultAgent()
-	// 系统指令 定义命令行参数 -instruction
-	var instruction string
-	flag.StringVar(&instruction, "instruction", "You are a helpful assistant.", "")
-	flag.Parse()
+	instruction := "You are a helpful assistant."
+	apiKey := resolveAgentAPIKey(defaultAgent)
+	if apiKey == "" {
+		return nil, fmt.Errorf("AI API Key 为空，请在 apps/config.yaml 填写 agent.providers.%s.api_key 或设置环境变量 DEEPSEEK_API_KEY", config.GlobalConfig.Agent.Default)
+	}
 
 	ctx := context.Background()
 	// 配置ChatModel
 	cm, err := deepseek.NewChatModel(ctx, &deepseek.ChatModelConfig{
-		APIKey:  defaultAgent.APIKey,
+		APIKey:  apiKey,
 		Model:   defaultAgent.ModelName,
 		BaseURL: defaultAgent.BaseURL,
 	})
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "init model failed: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("init model failed: %w", err)
 	}
+	logger.Log.Infof("AI 模型初始化成功，provider=%s model=%s", config.GlobalConfig.Agent.Default, defaultAgent.ModelName)
 	// 注册全局chatModel and tools callbacks
 	callbacks.AppendGlobalHandlers(&callback.TraceLoggerCallback{})
 	// 创建Agent
@@ -67,12 +88,11 @@ func GetAgentGraphRunner() *adk.Runner {
 		},
 	})
 	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return nil, err
 	}
 
 	return adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           agent,
 		EnableStreaming: true,
-	})
+	}), nil
 }

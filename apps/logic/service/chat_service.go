@@ -24,6 +24,10 @@ func (s *LogicService) SendMessage(args *pb_msg.SendMessageArgs, reply *pb_msg.S
 	if args.ReceiverId == -1 {
 		// 将用户提问插入数据库
 		message := models.NewMessages(args.SenderId, -1, args.Body, true)
+		if args.MsgId != 0 {
+			message.MsgId = args.MsgId
+			message.SeqId = args.SeqId
+		}
 		err := dao.InsertMessage(message)
 		if err != nil {
 			logger.Log.Errorf("插入数据库失败: %v", err)
@@ -42,6 +46,10 @@ func (s *LogicService) SendMessage(args *pb_msg.SendMessageArgs, reply *pb_msg.S
 	if errors.Is(err, redis.Nil) {
 		logger.Log.Infof("用户 [%d] 不在线，准备落库 MySQL", args.ReceiverId)
 		message := models.NewMessages(args.SenderId, args.ReceiverId, args.Body, false)
+		if args.MsgId != 0 {
+			message.MsgId = args.MsgId
+			message.SeqId = args.SeqId
+		}
 		err := dao.InsertMessage(message)
 		if err != nil {
 			logger.Log.Errorf("插入数据库失败: %v", err)
@@ -49,13 +57,15 @@ func (s *LogicService) SendMessage(args *pb_msg.SendMessageArgs, reply *pb_msg.S
 		}
 		reply.MsgId = message.MsgId
 	} else if err != nil {
-		logger.Log.Error("查询 Redis 出错: %v", err)
+		logger.Log.Errorf("查询 Redis 出错: %v", err)
 		return err
 	} else {
 		logger.Log.Infof("用户 [%d] 在线，连在网关 [%s] 上", args.ReceiverId, gatewayAddr)
-		// MVP 阶段：既然你知道他在线，说明可以发。
-		// （由于现在只有一台网关，其实 Gateway 自己去查 CliMap 就能发，Logic 这里打印日志即可）
 		message := models.NewMessages(args.SenderId, args.ReceiverId, args.Body, false)
+		if args.MsgId != 0 {
+			message.MsgId = args.MsgId
+			message.SeqId = args.SeqId
+		}
 		err := dao.InsertMessage(message)
 		if err != nil {
 			logger.Log.Errorf("插入数据库失败: %v", err)
@@ -76,11 +86,24 @@ func (s *LogicService) SyncUnread(args *pb_msg.SyncUnreadArgs, reply *pb_msg.Syn
 	// 组装到 reply 中返回给 Gateway
 	for _, msg := range messages {
 		reply.Messages = append(reply.Messages, &pb_msg.MessageItem{
-			MsgId:    msg.MsgId,
-			SenderId: msg.SenderId,
-			Content:  msg.Content,
+			MsgId:      msg.MsgId,
+			SenderId:   msg.SenderId,
+			Content:    msg.Content,
+			SeqId:      msg.SeqId,
+			SendStatus: int32(msg.SendStatus),
 		})
 	}
+	return nil
+}
+
+// NotifyDelivered 网关 WS 已成功写入接收方连接，将 send_status 从 0 置为 1
+func (s *LogicService) NotifyDelivered(args *pb_msg.NotifyDeliveredArgs, reply *pb_msg.NotifyDeliveredReply) error {
+	if err := dao.MarkSendTransportDelivered(args.MsgId); err != nil {
+		logger.Log.Errorf("NotifyDelivered 失败: %v", err)
+		reply.Success = false
+		return err
+	}
+	reply.Success = true
 	return nil
 }
 

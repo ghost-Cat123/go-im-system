@@ -10,6 +10,10 @@ message SendMessageArgs {
   int64 sender_id = 1; // 发送者id
   int64 receiver_id = 2; // 接收者id
   string body = 3; // 消息体
+  // 网关生成的全局消息 ID（雪花），与 messages.msg_id 一致；为 0 时由 Logic 自行生成（兼容旧客户端）
+  int64 msg_id = 4;
+  // 会话内序号，仅用于同一会话内排序；为 0 表示未使用会话序号
+  int64 seq_id = 5;
 }
 
 // 发送消息响应
@@ -34,6 +38,18 @@ message MessageItem {
   int64 sender_id = 2;
   string content = 3;
   string create_time = 4;
+  int64 seq_id = 5;
+  // 发送状态：0 未发送 1 发送未确认 2 发送已确认（与 models 常量一致）
+  int32 send_status = 6;
+}
+
+// 网关：对端 WS 已成功写入后上报，将 send_status 0 -> 1
+message NotifyDeliveredArgs {
+  int64 msg_id = 1;
+}
+
+message NotifyDeliveredReply {
+  bool success = 1;
 }
 
 // 读消息列表请求

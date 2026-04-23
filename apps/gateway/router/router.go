@@ -4,12 +4,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"go-im-system/apps/gateway/api/user_api"
 	"go-im-system/apps/gateway/ws"
+	"net/http"
 )
+
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With")
+		c.Header("Access-Control-Expose-Headers", "Content-Length, Content-Type")
+		c.Header("Access-Control-Allow-Credentials", "false")
+
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	}
+}
 
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
 	_ = r.SetTrustedProxies(nil)
+	r.Use(corsMiddleware())
 
 	// 1. RESTful HTTP 路由组 处理短连接
 	apiGroup := r.Group("/api")

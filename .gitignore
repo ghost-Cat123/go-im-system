@@ -1,2 +1,9 @@
 .idea
 .gitignore
+*.iml
+*_test.go
+apps/config.yaml
+logic.exe
+gateway.exe
+logs/system.log
+/apps/logic/sql/*.sql

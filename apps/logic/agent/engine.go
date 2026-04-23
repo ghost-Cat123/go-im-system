@@ -24,8 +24,16 @@ func HandlerAIMessage(senderId int64, content string) {
 
 	sessionID := "agent_session:" + strconv.FormatInt(senderId, 10)
 
+	logger.Log.Infof("[AI] 开始处理用户[%d]问题: %s", senderId, strings.TrimSpace(content))
+
 	// 1. 调用Eino 返回channel (存储的AI回应)
-	runner := GetAgentGraphRunner()
+	runner, err := GetAgentGraphRunner()
+	if err != nil {
+		logger.Log.Errorf("[AI] 初始化 Runner 失败: %v", err)
+		cache.GetCache().Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), "AI服务初始化失败，请检查配置或稍后重试。")
+		cache.GetCache().Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), "[DONE]")
+		return
+	}
 	// 将用户输入 转换为schema
 	userMsg := schema.UserMessage(strings.TrimSpace(content))
 	// 创建store
@@ -34,13 +42,17 @@ func HandlerAIMessage(senderId int64, content string) {
 	// 创建或回复session
 	session := store.GetOrCreate(sessionID)
 	// 存入session
-	err := session.Append(ctx, userMsg)
+	err = session.Append(ctx, userMsg)
 	if err != nil {
 		logger.Log.Errorf("无法存入session: %v", err)
 		return
 	}
 	// 构建[]*schema.Message列表
 	history, err := session.GetMessages(ctx)
+	if err != nil {
+		logger.Log.Errorf("读取session失败: %v", err)
+		return
+	}
 	// 执行
 	events := runner.Run(ctx, history)
 	// getAssistantFromEvents 返回一个channel
@@ -49,10 +61,17 @@ func HandlerAIMessage(senderId int64, content string) {
 	// 2. 循环读channel 并推入Redis
 	for chunkText := range outStream {
 		fullText += chunkText
-		cache.GetCache().Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), chunkText)
+		if err := cache.GetCache().Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), chunkText).Err(); err != nil {
+			logger.Log.Errorf("[AI] 发布 chunk 到 Redis 失败: %v", err)
+		}
+	}
+	if strings.TrimSpace(fullText) == "" {
+		logger.Log.Warnf("[AI] 用户[%d]本次对话未收到模型输出", senderId)
 	}
 	// 3. 发布结束符告诉前端 AI生成完毕
-	cache.GetCache().Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), "[DONE]")
+	if err := cache.GetCache().Publish(ctx, "ai:chunk:user:"+strconv.FormatInt(senderId, 10), "[DONE]").Err(); err != nil {
+		logger.Log.Errorf("[AI] 发布 DONE 到 Redis 失败: %v", err)
+	}
 	// 4. 存储AI消息到session
 	assistantMsg := schema.AssistantMessage(fullText, nil)
 	err = session.Append(ctx, assistantMsg)

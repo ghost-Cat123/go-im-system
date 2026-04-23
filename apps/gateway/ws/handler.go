@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"GeeRPC/xclient"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"go-im-system/apps/pkg/logger"
 	"go-im-system/apps/pkg/proto/pb_msg"
 	"go-im-system/apps/pkg/utils"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -54,10 +54,10 @@ func WSHandler(c *gin.Context) {
 	// 2. 获取该用户的websocket长连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("WebSocket 升级失败: %v", err)
+		logger.Log.Fatalf("WebSocket 升级失败: %v", err)
 		return
 	}
-	log.Printf("用户 [%s] 成功建立websocket连接", userIDStr)
+	logger.Log.Infof("用户 [%s] 成功建立websocket连接", userIDStr)
 
 	// 3. 将conn连接放入全局ConnectionManager Map中维护不同用户的连接
 	GlobalCliMap.Set(userIDStr, conn)
@@ -68,13 +68,13 @@ func WSHandler(c *gin.Context) {
 	gatewayAddr := "127.0.0.1:8080"
 	err = cache.GetCache().Set(ctx, redisKey, gatewayAddr, time.Hour*24).Err()
 	if err != nil {
-		log.Printf("Redis 路由写入失败: %v", err)
+		logger.Log.Errorf("Redis 路由写入失败: %v", err)
 	}
 
 	// 5. 拉取所有发送给该用户的未读信息
 	err = syncMessage(userID, conn)
 	if err != nil {
-		log.Printf("消息同步失败: %v", err)
+		logger.Log.Errorf("消息同步失败: %v", err)
 		return
 	}
 
@@ -88,22 +88,34 @@ func WSHandler(c *gin.Context) {
 func syncMessage(userID int64, conn *websocket.Conn) error {
 	syncArgs := &pb_msg.SyncUnreadArgs{ReceiverId: userID}
 	syncReply := &pb_msg.SyncUnreadReply{}
-	err := rpcclient.LogicRpcClient.Call(context.Background(), "LogicService.SyncUnread", syncArgs, syncReply)
+	routingKey := strconv.FormatInt(userID, 10)
+	ctx := xclient.WithRoutingKey(context.Background(), routingKey)
+	err := rpcclient.LogicRpcClient.Call(ctx, "LogicService.SyncUnread", syncArgs, syncReply)
 	if err == nil && len(syncReply.Messages) > 0 {
 		// 如果有未读消息，通过 conn 循环 WriteMessage 发给该用户！
 		for _, msg := range syncReply.Messages {
-			// 构造 JSON 发送
-			unReadMsg := fmt.Sprintf(`{"SenderId": "%d", "content": "%s"}`, msg.SenderId, msg.Content)
-			_ = conn.WriteMessage(websocket.TextMessage, []byte(unReadMsg))
+			unReadMsg, err := json.Marshal(map[string]interface{}{
+				"chat_type":   "sync_unread",
+				"SenderId":    msg.SenderId,
+				"content":     msg.Content,
+				"msg_id":      msg.MsgId,
+				"seq_id":      msg.SeqId,
+				"send_status": msg.SendStatus,
+			})
+			if err != nil {
+				logger.Log.Errorf("未读消息 JSON 序列化失败: %v", err)
+				continue
+			}
+			_ = conn.WriteMessage(websocket.TextMessage, unReadMsg)
 		}
 		// 发送完后，最好再调一个 RPC 告诉 Logic 服：这些消息已读了 (Update is_read = 1)
 		readArgs := &pb_msg.ReadMessagesArgs{ReceiverId: userID}
 		readReply := &pb_msg.ReadMessagesReply{}
-		err = rpcclient.LogicRpcClient.Call(context.Background(), "LogicService.ReadMessages", readArgs, readReply)
+		err = rpcclient.LogicRpcClient.Call(ctx, "LogicService.ReadMessages", readArgs, readReply)
 		if err != nil || !readReply.Success {
-			log.Printf("消息 [%d] 连接关闭失败", userID)
+			logger.Log.Errorf("消息 [%d] 连接关闭失败", userID)
 		} else {
-			log.Printf("未读消息拉取成功")
+			logger.Log.Infof("未读消息拉取成功")
 		}
 	}
 	return err
@@ -115,10 +127,15 @@ func subscribeAILoop(userIDStr string, conn *websocket.Conn) {
 	pubSubChannel := "ai:chunk:user:" + userIDStr
 	// 1. 开启订阅
 	pubSub := cache.GetCache().Subscribe(ctx, pubSubChannel)
+	if _, err := pubSub.Receive(ctx); err != nil {
+		logger.Log.Errorf("用户 [%s] 订阅 AI 频道失败: %v", userIDStr, err)
+		return
+	}
+	logger.Log.Infof("用户 [%s] 已订阅 AI 频道: %s", userIDStr, pubSubChannel)
 	// 2. 协程退出 关闭订阅 释放Redis连接
 	defer func() {
 		_ = pubSub.Close()
-		log.Printf("用户 [%s] 的 AI 订阅流已关闭", userIDStr)
+		logger.Log.Infof("用户 [%s] 的 AI 订阅流已关闭", userIDStr)
 	}()
 	// 3. 阻塞监听频道消息
 	for msg := range pubSub.Channel() {
@@ -137,7 +154,7 @@ func subscribeAILoop(userIDStr string, conn *websocket.Conn) {
 
 		err := conn.WriteMessage(websocket.TextMessage, []byte(pushMsg))
 		if err != nil {
-			log.Printf("向用户 [%s] 推送 AI 流式数据失败: %v", userIDStr, err)
+			logger.Log.Errorf("向用户 [%s] 推送 AI 流式数据失败: %v", userIDStr, err)
 			// 写入失败 退出循环
 			break
 		}
@@ -191,7 +208,8 @@ func readLoop(userID int64, conn *websocket.Conn) {
 		case "group_chat":
 			// handleGroupChat(userID, msgData)  // 调群聊函数
 		case "ack":
-			handleAck(userID, msgData) // 调已读确认函数
+			// 单级确认：已读 + send_status 置为「发送已确认」(2)，不单独维护投递 ACK
+			handleAck(userID, msgData)
 		default:
 			logger.Log.Info("未知动作", baseReq.ChatType)
 		}
