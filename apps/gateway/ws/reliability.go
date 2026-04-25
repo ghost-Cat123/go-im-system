@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/gorilla/websocket"
 	"go-im-system/apps/pkg/cache"
 	"go-im-system/apps/pkg/logger"
 	"go-im-system/apps/pkg/utils"
@@ -148,40 +147,57 @@ func (m *RedisReliabilityManager) StartRetryLoop(ctx context.Context) {
 	}
 }
 
-// Lua：取出 score<=now 的一批 member 并原子删除，返回给本机处理
-var fetchDelayTasksLua = redis.NewScript(`
-	local msgs = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, tonumber(ARGV[2]))
-	if #msgs > 0 then
-		redis.call('ZREM', KEYS[1], unpack(msgs))
-	end
-	return msgs
-`)
-
 func (m *RedisReliabilityManager) processRetry(ctx context.Context) {
 	now := time.Now().Unix()
 	batchSize := 50
-	result, err := fetchDelayTasksLua.Run(ctx, m.rdb, []string{"pending:msgs"}, now, batchSize).Result()
+
+	// 1. 从ZSet获取到期消息
+	msgIDStrs, err := m.rdb.ZRangeByScore(ctx, "pending:msgs", &redis.ZRangeBy{
+		Min:    "-inf",
+		Max:    strconv.FormatInt(now, 10),
+		Offset: 0,
+		Count:  int64(batchSize),
+	}).Result()
+
 	if err != nil && !errors.Is(err, redis.Nil) {
 		logger.Log.Errorf("获取需要重试的消息失败: %v", err)
 		return
 	}
 
-	msgIDStrs, ok := result.([]interface{})
-	if !ok {
-		return
-	}
-
-	for _, idObj := range msgIDStrs {
-		s, ok := idObj.(string)
-		if !ok {
-			logger.Log.Errorf("获取需要重试的消息ID格式错误: %v", err)
-			continue
-		}
-		msgID, err := strconv.ParseInt(s, 10, 64)
+	for _, msgIDStr := range msgIDStrs {
+		msgID, err := strconv.ParseInt(msgIDStr, 10, 64)
 		if err != nil {
 			logger.Log.Errorf("解析重试消息 ID 失败: %v", err)
 			continue
 		}
+		// 2. 生成分布式锁
+		lockKey := fmt.Sprintf("lock:msg:%d", msgID)
+		// 3. 尝试获取分布式锁
+		locked, err := m.rdb.SetNX(ctx, lockKey, "1", 30*time.Second).Result()
+		if err != nil {
+			logger.Log.Errorf("获取分布式锁失败: %v", err)
+			continue
+		}
+		if !locked {
+			// 已被其他实例获取，跳过
+			continue
+		}
+
+		// 4. 原子删除ZSet中的消息
+		pipe := m.rdb.Pipeline()
+		zremCmd := pipe.ZRem(ctx, "pending:msgs", msgIDStr)
+		_, err = pipe.Exec(ctx)
+		if err != nil {
+			logger.Log.Errorf("删除 ZSet 消息失败: %v", err)
+			m.rdb.Del(ctx, lockKey)
+			continue
+		}
+		if zremCmd.Val() == 0 {
+			m.rdb.Del(ctx, lockKey)
+			continue
+		}
+
+		// 5. 获取消息详情
 		detailKey := pendingDetailKey(msgID)
 		msgJson, err := m.rdb.Get(ctx, detailKey).Result()
 		if err != nil {
@@ -195,25 +211,28 @@ func (m *RedisReliabilityManager) processRetry(ctx context.Context) {
 			logger.Log.Errorf("消息解析失败: %v", err)
 			continue
 		}
-
-		if m.retryCallback == nil {
-			logger.Log.Errorf("retryCallback 未设置，%d 秒后重新入队", msg.MsgID)
-			msg.NextRetryAt = time.Now().Add(time.Second * 2)
-			if err := m.AddPending(ctx, &msg); err != nil {
-				logger.Log.Errorf("重新入队失败: %v", err)
-			}
-			continue
+		// 6. 处理消息
+		var processed bool
+		if m.retryCallback != nil {
+			processed = m.retryCallback(ctx, &msg)
+		} else {
+			logger.Log.Errorf("retryCallback 未设置，消息 %d 处理失败", msg.MsgID)
+			processed = false
 		}
-		// 重试是否成功
-		if m.retryCallback(ctx, &msg) {
-			// 重试成功，删除待确认投递
+
+		// 7. 根据处理结果更新状态
+		if processed {
+			// 处理成功，删除详情
 			if err := m.Ack(ctx, msg.MsgID); err != nil {
 				logger.Log.Errorf("ACK 处理失败: %v", err)
 			}
 		} else {
-			// 重试失败，更新重试信息
+			// 处理失败，更新重试信息
 			m.updateRetryInfo(ctx, &msg)
 		}
+
+		// 8. 释放锁
+		m.rdb.Del(ctx, lockKey)
 	}
 }
 
@@ -224,7 +243,7 @@ func (m *RedisReliabilityManager) updateRetryInfo(ctx context.Context, msg *Pend
 		return
 	}
 	backoff := m.config.InitialBackoff
-	for i := 0; i <= msg.RetryCount; i++ {
+	for i := 0; i < msg.RetryCount; i++ {
 		backoff *= 2
 		// 超出最大退避时间
 		if backoff > m.config.MaxBackoff {
@@ -279,8 +298,8 @@ func SetOnTransportDelivered(f func(ctx context.Context, senderID, msgID int64))
 	onTransportDelivered = f
 }
 
-// GenerateMsgID 生成全局唯一 MsgID（雪花）。seqID 仅由调用方写入 PendingMessage / DB，用于会话内排序，不编码进本返回值。
-func (m *RedisReliabilityManager) GenerateMsgID(ctx context.Context, conversationID string, seqID int64) int64 {
+// GenerateMsgID 生成全局唯一 MsgID（雪花）seqID 仅由调用方写入
+func (m *RedisReliabilityManager) GenerateMsgID(_ context.Context, _ string, _ int64) int64 {
 	return utils.GetSnowflake().Generate()
 }
 
@@ -298,14 +317,12 @@ func retryPushToReceivers(ctx context.Context, msg *PendingMessage) bool {
 	}
 	ok := true
 	for _, rid := range msg.ReceiverIDs {
-		conn, exists := GlobalCliMap.Get(strconv.FormatInt(rid, 10))
+		client, exists := GlobalCliMap.Get(strconv.FormatInt(rid, 10))
 		if !exists {
 			ok = false
 			continue
 		}
-		if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-			ok = false
-		}
+		client.SendMessage(payload)
 	}
 	if ok && onTransportDelivered != nil {
 		onTransportDelivered(ctx, msg.SenderID, msg.MsgID)

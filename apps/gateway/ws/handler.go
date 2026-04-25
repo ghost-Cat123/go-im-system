@@ -36,8 +36,8 @@ type ClientRequest struct {
 	Message  string `json:"message"`
 }
 
-// WSHandler 处理websocket请求
-func WSHandler(c *gin.Context) {
+// Handler 处理websocket请求
+func Handler(c *gin.Context) {
 	// 1. 根据token获取用户信息
 	token := c.Query("token")
 	if token == "" {
@@ -60,9 +60,12 @@ func WSHandler(c *gin.Context) {
 	logger.Log.Infof("用户 [%s] 成功建立websocket连接", userIDStr)
 
 	// 3. 将conn连接放入全局ConnectionManager Map中维护不同用户的连接
-	GlobalCliMap.Set(userIDStr, conn)
+	client := NewClient(userID, conn)
 
-	// 4. 将连接信息放入redis路由表
+	// 4. 注册到全局路由 挤掉旧连接
+	GlobalCliMap.Register(userID, client)
+
+	// 5. 更新redis路由表
 	ctx := context.Background()
 	redisKey := "route:user:" + userIDStr
 	gatewayAddr := "127.0.0.1:8080"
@@ -71,21 +74,24 @@ func WSHandler(c *gin.Context) {
 		logger.Log.Errorf("Redis 路由写入失败: %v", err)
 	}
 
-	// 5. 拉取所有发送给该用户的未读信息
-	err = syncMessage(userID, conn)
+	// 启动写通道
+	go client.WritePump()
+
+	// 6. 拉取所有发送给该用户的未读信息
+	err = syncMessage(userID, client)
 	if err != nil {
 		logger.Log.Errorf("消息同步失败: %v", err)
 		return
 	}
 
-	// 6. 启动当前用户独立的Redis订阅流
-	go subscribeAILoop(userIDStr, conn)
+	// 7. 启动当前用户独立的Redis订阅流
+	go subscribeAILoop(userIDStr, client)
 
-	// 6. 开启独立线程 处理该连接客户端消息
-	go readLoop(userID, conn)
+	// 8. 开启独立线程 处理该连接客户端消息
+	go client.ReadPump()
 }
 
-func syncMessage(userID int64, conn *websocket.Conn) error {
+func syncMessage(userID int64, client *Client) error {
 	syncArgs := &pb_msg.SyncUnreadArgs{ReceiverId: userID}
 	syncReply := &pb_msg.SyncUnreadReply{}
 	routingKey := strconv.FormatInt(userID, 10)
@@ -106,7 +112,7 @@ func syncMessage(userID int64, conn *websocket.Conn) error {
 				logger.Log.Errorf("未读消息 JSON 序列化失败: %v", err)
 				continue
 			}
-			_ = conn.WriteMessage(websocket.TextMessage, unReadMsg)
+			client.SendMessage(unReadMsg)
 		}
 		// 发送完后，最好再调一个 RPC 告诉 Logic 服：这些消息已读了 (Update is_read = 1)
 		readArgs := &pb_msg.ReadMessagesArgs{ReceiverId: userID}
@@ -121,7 +127,7 @@ func syncMessage(userID int64, conn *websocket.Conn) error {
 	return err
 }
 
-func subscribeAILoop(userIDStr string, conn *websocket.Conn) {
+func subscribeAILoop(userIDStr string, client *Client) {
 	ctx := context.Background()
 	// 频道名要和发布时一致
 	pubSubChannel := "ai:chunk:user:" + userIDStr
@@ -143,76 +149,12 @@ func subscribeAILoop(userIDStr string, conn *websocket.Conn) {
 		if msg.Payload == "[DONE]" {
 			// 给前端的
 			endMsg := `{"chat_type": "ai_end", "from": "-1", "content": ""}`
-			if err := conn.WriteMessage(websocket.TextMessage, []byte(endMsg)); err != nil {
-				// 用户断开 销毁订阅
-				break
-			}
+			client.SendMessage([]byte(endMsg))
 			continue
 		}
 		// 收到普通文字 Chunk，组装成 JSON 推给前端
 		pushMsg := fmt.Sprintf(`{"chat_type": "ai_chunk", "from": "-1", "content": "%s"}`, msg.Payload)
 
-		err := conn.WriteMessage(websocket.TextMessage, []byte(pushMsg))
-		if err != nil {
-			logger.Log.Errorf("向用户 [%s] 推送 AI 流式数据失败: %v", userIDStr, err)
-			// 写入失败 退出循环
-			break
-		}
-	}
-}
-
-// 死循环读取客户端消息
-func readLoop(userID int64, conn *websocket.Conn) {
-	userIDStr := strconv.FormatInt(userID, 10)
-	// 连接断开时的清理工作
-	defer func() {
-		logger.Log.Infof("用户 [%d] 断开连接", userID)
-		// 1. 本地连接池移除该用户的连接
-		GlobalCliMap.Delete(userIDStr)
-		// 2. 从 Redis 路由表清理 (宣告全网该用户离线)
-		ctx := context.Background()
-		redisKey := "route:user:" + userIDStr
-		cache.GetCache().Del(ctx, redisKey)
-		err := conn.Close()
-		if err != nil {
-			logger.Log.Errorf("用户 [%d] 连接关闭失败", userID)
-			return
-		}
-	}()
-
-	for {
-		messageType, msgData, err := conn.ReadMessage()
-		if err != nil {
-			logger.Log.Errorf("读取消息失败或用户掉线: %v", err)
-			break
-		}
-		// 解析基础包，只看 action 是什么
-		var baseReq struct {
-			ChatType string `json:"chat_type"`
-		}
-		if err := json.Unmarshal(msgData, &baseReq); err != nil {
-			return
-		}
-
-		switch baseReq.ChatType {
-		case "ping":
-			// 收到前端是心跳信息
-			ctx := context.Background()
-			redisKey := "route:user:" + userIDStr
-			// 重新设置30s过期时间
-			cache.GetCache().Expire(ctx, redisKey, time.Second*30)
-			// 给前端发送响应
-			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"action":"pong"}`))
-		case "single_chat":
-			handleSingleChat(messageType, userID, msgData) // 调专门处理单聊的函数
-		case "group_chat":
-			// handleGroupChat(userID, msgData)  // 调群聊函数
-		case "ack":
-			// 单级确认：已读 + send_status 置为「发送已确认」(2)，不单独维护投递 ACK
-			handleAck(userID, msgData)
-		default:
-			logger.Log.Info("未知动作", baseReq.ChatType)
-		}
-		logger.Log.Infof("收到用户 [%d] 的消息: %s", userID, string(msgData))
+		client.SendMessage([]byte(pushMsg))
 	}
 }

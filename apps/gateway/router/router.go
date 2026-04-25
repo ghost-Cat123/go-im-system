@@ -37,7 +37,7 @@ func SetupRouter() *gin.Engine {
 	}
 
 	// 2. 处理 websocket长连接路由
-	r.GET("/ws", ws.WSHandler)
+	r.GET("/ws", ws.Handler)
 
 	return r
 }

@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"go-im-system/apps/gateway/rpcclient"
 	"go-im-system/apps/pkg/logger"
 	"go-im-system/apps/pkg/proto/pb_msg"
@@ -43,7 +42,7 @@ func marshalChatPush(msgID, seqID, from int64, content string) ([]byte, error) {
 	})
 }
 
-func handleSingleChat(messageType int, senderId int64, msgData []byte) {
+func handleSingleChat(senderId int64, msgData []byte) {
 	var clientReq ClientRequest
 	if err := json.Unmarshal(msgData, &clientReq); err != nil {
 		logger.Log.Errorf("JSON解析失败: %v", err)
@@ -88,9 +87,9 @@ func handleSingleChat(messageType int, senderId int64, msgData []byte) {
 	// 如果可靠性管理器为空，则直接推送消息
 	if DefaultReliability == nil {
 		receiverStr := strconv.FormatInt(clientReq.Receiver, 10)
-		if receiverConn, ok := GlobalCliMap.Get(receiverStr); ok {
+		if receiverClient, ok := GlobalCliMap.Get(receiverStr); ok {
 			pushMsg := fmt.Sprintf(`{"from": "%d", "content": "%s"}`, senderId, clientReq.Message)
-			_ = receiverConn.WriteMessage(messageType, []byte(pushMsg))
+			receiverClient.SendMessage([]byte(pushMsg))
 		}
 		return
 	}
@@ -123,11 +122,8 @@ func handleSingleChat(messageType int, senderId int64, msgData []byte) {
 	}
 	// 推送消息
 	receiverStr := strconv.FormatInt(clientReq.Receiver, 10)
-	if receiverConn, ok := GlobalCliMap.Get(receiverStr); ok {
-		if err := receiverConn.WriteMessage(messageType, payload); err != nil {
-			logger.Log.Errorf("首包推送失败，将依赖重试: %v", err)
-			return
-		}
+	if receiverClient, ok := GlobalCliMap.Get(receiverStr); ok {
+		receiverClient.SendMessage(payload)
 		if err := DefaultReliability.Ack(bgCtx, finalMsgID); err != nil {
 			logger.Log.Errorf("首包送达后 Ack 失败: %v", err)
 		}
@@ -158,9 +154,9 @@ func handleAck(userId int64, msgData []byte) {
 		return
 	}
 
-	if senderConn, ok := GlobalCliMap.Get(strconv.FormatInt(ackReq.SenderId, 10)); ok {
+	if senderClient, ok := GlobalCliMap.Get(strconv.FormatInt(ackReq.SenderId, 10)); ok {
 		ackMsg := fmt.Sprintf(`{"chat_type": "ack", "read_receipt": %d, "msg_id": %d}`, userId, ackReq.MsgId)
-		_ = senderConn.WriteMessage(websocket.TextMessage, []byte(ackMsg))
+		senderClient.SendMessage([]byte(ackMsg))
 		log.Printf("ACK成功发送给 [%d]", ackReq.SenderId)
 	}
 }
