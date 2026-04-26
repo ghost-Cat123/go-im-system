@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"time"
 
 	"go-im-system/apps/gateway/rpcclient"
 	"go-im-system/apps/pkg/logger"
@@ -56,7 +55,7 @@ func handleSingleChat(senderId int64, msgData []byte) {
 
 	if DefaultReliability != nil {
 		convID = singleChatConvID(senderId, clientReq.Receiver)
-		// 获取会话内序号
+		// 获取会话内单调序号（Redis INCR，保证同会话内消息有序）
 		seq, err := DefaultReliability.GetNextSeqID(bgCtx, convID, senderId)
 		if err != nil {
 			logger.Log.Errorf("分配会话序号失败: %v", err)
@@ -82,54 +81,16 @@ func handleSingleChat(senderId int64, msgData []byte) {
 		log.Printf("用户 [%d] 的消息发送失败: %v", senderId, err)
 		return
 	}
-	logger.Log.Infof("[Gateway] SendMessage RPC 成功: sender=%d receiver=%d msgID=%d", senderId, clientReq.Receiver, sendMessageReply.MsgId)
 
-	// 如果可靠性管理器为空，则直接推送消息
-	if DefaultReliability == nil {
-		receiverStr := strconv.FormatInt(clientReq.Receiver, 10)
-		if receiverClient, ok := GlobalCliMap.Get(receiverStr); ok {
-			pushMsg := fmt.Sprintf(`{"from": "%d", "content": "%s"}`, senderId, clientReq.Message)
-			receiverClient.SendMessage([]byte(pushMsg))
-		}
-		return
-	}
-
-	// 使用 Logic 返回的 msg_id（与落库一致；网关已传 msg_id 时通常相同）
+	// Logic 落库成功并已 Publish 到 RabbitMQ
+	// MQ 消费者（mq_consumer.go）将负责把消息推送给接收方的 WebSocket 连接
+	// 若接收方离线，消息已落库，上线时 SyncUnread 会自动拉取
 	finalMsgID := sendMessageReply.MsgId
 	if finalMsgID == 0 {
 		finalMsgID = msgID
 	}
-	// 组装待确认投递
-	pending := &PendingMessage{
-		MsgID:       finalMsgID,
-		ConvID:      convID,
-		SenderID:    senderId,
-		ReceiverIDs: []int64{clientReq.Receiver},
-		Content:     clientReq.Message,
-		SeqID:       seqID,
-		ChatType:    "single_chat",
-		NextRetryAt: time.Now(),
-	}
-	// 加入待确认投递
-	if err := DefaultReliability.AddPending(bgCtx, pending); err != nil {
-		logger.Log.Errorf("加入 pending 失败: %v", err)
-	}
-	// 组装推送 JSON
-	payload, err := marshalChatPush(finalMsgID, seqID, senderId, clientReq.Message)
-	if err != nil {
-		logger.Log.Errorf("组装推送 JSON 失败: %v", err)
-		return
-	}
-	// 推送消息
-	receiverStr := strconv.FormatInt(clientReq.Receiver, 10)
-	if receiverClient, ok := GlobalCliMap.Get(receiverStr); ok {
-		receiverClient.SendMessage(payload)
-		if err := DefaultReliability.Ack(bgCtx, finalMsgID); err != nil {
-			logger.Log.Errorf("首包送达后 Ack 失败: %v", err)
-		}
-	} else {
-		logger.Log.Infof("用户 [%d] 不在线，pending 已由 Redis 重试线程投递", clientReq.Receiver)
-	}
+	logger.Log.Infof("[Gateway] RPC 成功，消息已委托 MQ 分发: sender=%d receiver=%d msgID=%d",
+		senderId, clientReq.Receiver, finalMsgID)
 }
 
 func handleAck(userId int64, msgData []byte) {

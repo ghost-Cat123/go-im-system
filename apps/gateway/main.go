@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +11,7 @@ import (
 	"go-im-system/apps/pkg/config"
 	"go-im-system/apps/pkg/db"
 	"go-im-system/apps/pkg/logger"
+	"go-im-system/apps/pkg/mq"
 	"go-im-system/apps/pkg/utils"
 	"log"
 	"strconv"
@@ -49,7 +49,15 @@ func main() {
 
 	rpcclient.InitRPCClient()
 
-	ws.InitGatewayReliability(context.Background(), &ws.ReliabilityConfig{
+	// 初始化 RabbitMQ：Gateway 作为消息消费者，订阅自身专属 Queue
+	gatewayAddr := "127.0.0.1:8080"
+	if mqErr := mq.InitRabbitMQ(config.GlobalConfig.RabbitMQ.URL); mqErr != nil {
+		logger.Log.Fatalf("初始化 RabbitMQ 失败: %v", mqErr)
+	}
+	defer mq.Close()
+	ws.StartMQConsumer(gatewayAddr) // 开启异步消费协程
+
+	ws.InitGatewayReliability(&ws.ReliabilityConfig{
 		InitialBackoff: time.Second,
 		MaxBackoff:     time.Minute * 2,
 		MaxRetry:       12,

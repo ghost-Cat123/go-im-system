@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/go-redis/redis/v8"
 	"go-im-system/apps/logic/agent"
@@ -9,6 +10,7 @@ import (
 	"go-im-system/apps/logic/models"
 	"go-im-system/apps/pkg/cache"
 	"go-im-system/apps/pkg/logger"
+	"go-im-system/apps/pkg/mq"
 	"go-im-system/apps/pkg/proto/pb_msg"
 	"strconv"
 )
@@ -60,6 +62,7 @@ func (s *LogicService) SendMessage(args *pb_msg.SendMessageArgs, reply *pb_msg.S
 		logger.Log.Errorf("查询 Redis 出错: %v", err)
 		return err
 	} else {
+		// 用户在线：落库并通过 RabbitMQ 通知目标网关实时推送
 		logger.Log.Infof("用户 [%d] 在线，连在网关 [%s] 上", args.ReceiverId, gatewayAddr)
 		message := models.NewMessages(args.SenderId, args.ReceiverId, args.Body, false)
 		if args.MsgId != 0 {
@@ -72,6 +75,25 @@ func (s *LogicService) SendMessage(args *pb_msg.SendMessageArgs, reply *pb_msg.S
 			return err
 		}
 		reply.MsgId = message.MsgId
+
+		// 落库成功后将消息发布到 RabbitMQ
+		// RoutingKey = gatewayAddr，Direct Exchange 将消息精准投递到目标网关的专属 Queue
+		payload := &mq.PushPayload{
+			MsgID:      message.MsgId,
+			SeqID:      message.SeqId,
+			SenderID:   message.SenderId,
+			ReceiverID: message.ReceiverId,
+			Content:    message.Content,
+			ChatType:   "chat_push",
+		}
+		body, _ := json.Marshal(payload)
+		if pubErr := mq.Publish(ctx, gatewayAddr, body); pubErr != nil {
+			// Publish 失败不影响落库，接收方上线时会通过 SyncUnread 全量拉取兑底
+			logger.Log.Errorf("Publish 到 RabbitMQ 失败(已落库，不影响): %v", pubErr)
+		} else {
+			logger.Log.Infof("[MQ] Publish 成功: receiver=%d msgID=%d gateway=%s",
+				args.ReceiverId, message.MsgId, gatewayAddr)
+		}
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"go-im-system/apps/pkg/config"
 	"go-im-system/apps/pkg/db"
 	"go-im-system/apps/pkg/logger"
+	"go-im-system/apps/pkg/mq"
 	"go-im-system/apps/pkg/utils"
 	"log"
 	"net"
@@ -44,6 +45,12 @@ func main() {
 	if err := utils.InitSnowflake(int64(logicSnow)); err != nil {
 		logger.Log.Fatalf("Logic Snowflake 初始化失败: %v", err)
 	}
+
+	// 初始化 RabbitMQ：Logic 作为消息生产者，落库后将消息发布到目标网关
+	if mqErr := mq.InitRabbitMQ(config.GlobalConfig.RabbitMQ.URL); mqErr != nil {
+		logger.Log.Fatalf("初始化 RabbitMQ 失败: %v", mqErr)
+	}
+	defer mq.Close()
 
 	task.StartCronJobs()
 

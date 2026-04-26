@@ -25,11 +25,11 @@ import (
 type ReliabilityManager interface {
 	GetNextSeqID(ctx context.Context, conversationID string, participantID int64) (int64, error)
 	GenerateMsgID(ctx context.Context, conversationID string, seqID int64) int64
-	AddPending(ctx context.Context, msg *PendingMessage) error
-	Ack(ctx context.Context, msgID int64) error
 	IsDuplicate(ctx context.Context, msgID int64) (bool, error)
-	StartRetryLoop(ctx context.Context)
-	SetRetryCallback(callback retryCallback)
+	// AddPending(ctx context.Context, msg *PendingMessage) error
+	// Ack(ctx context.Context, msgID int64) error
+	// StartRetryLoop(ctx context.Context)
+	// SetRetryCallback(callback retryCallback)
 }
 
 // PendingMessage 待确认投递（网关到对端 WebSocket 写成功前可重试）
@@ -47,13 +47,13 @@ type PendingMessage struct {
 	Backoff     time.Duration `json:"backoff"`       // 退避时间
 }
 
-type retryCallback func(ctx context.Context, msg *PendingMessage) bool
+// type retryCallback func(ctx context.Context, msg *PendingMessage) bool
 
 // RedisReliabilityManager 基于 Redis 的实现（无状态网关多实例安全：Lua 抢占任务）
 type RedisReliabilityManager struct {
 	rdb    *redis.Client
 	config *ReliabilityConfig
-	retryCallback
+	// retryCallback
 }
 
 // ReliabilityConfig 配置
@@ -110,155 +110,155 @@ func (m *RedisReliabilityManager) IsDuplicate(ctx context.Context, msgID int64) 
 	return !ok, nil
 }
 
-// AddPending 写入详情 + ZSet（member 为十进制 MsgID 字符串）
-func (m *RedisReliabilityManager) AddPending(ctx context.Context, msg *PendingMessage) error {
-	if msg.MaxRetry <= 0 {
-		msg.MaxRetry = m.config.MaxRetry
-	}
-	msgJson, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("消息序列化错误: %v", err)
-	}
-	key := "pending:msgs"
-	member := strconv.FormatInt(msg.MsgID, 10)
-	z := &redis.Z{
-		Score:  float64(msg.NextRetryAt.Unix()),
-		Member: member,
-	}
-	detailKey := pendingDetailKey(msg.MsgID)
-	pipe := m.rdb.Pipeline()
-	pipe.Set(ctx, detailKey, msgJson, 24*time.Hour)
-	pipe.ZAdd(ctx, key, z)
-	_, err = pipe.Exec(ctx)
-	return err
-}
+// // AddPending 写入详情 + ZSet（member 为十进制 MsgID 字符串）
+// func (m *RedisReliabilityManager) AddPending(ctx context.Context, msg *PendingMessage) error {
+// 	if msg.MaxRetry <= 0 {
+// 		msg.MaxRetry = m.config.MaxRetry
+// 	}
+// 	msgJson, err := json.Marshal(msg)
+// 	if err != nil {
+// 		return fmt.Errorf("消息序列化错误: %v", err)
+// 	}
+// 	key := "pending:msgs"
+// 	member := strconv.FormatInt(msg.MsgID, 10)
+// 	z := &redis.Z{
+// 		Score:  float64(msg.NextRetryAt.Unix()),
+// 		Member: member,
+// 	}
+// 	detailKey := pendingDetailKey(msg.MsgID)
+// 	pipe := m.rdb.Pipeline()
+// 	pipe.Set(ctx, detailKey, msgJson, 24*time.Hour)
+// 	pipe.ZAdd(ctx, key, z)
+// 	_, err = pipe.Exec(ctx)
+// 	return err
+// }
 
-// StartRetryLoop 定时扫描（多实例下由 Lua 原子抢占，避免同一任务被多机同时投递）
-func (m *RedisReliabilityManager) StartRetryLoop(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			m.processRetry(ctx)
-		}
-	}
-}
+// // StartRetryLoop 定时扫描（多实例下由 Lua 原子抢占，避免同一任务被多机同时投递）
+// func (m *RedisReliabilityManager) StartRetryLoop(ctx context.Context) {
+// 	ticker := time.NewTicker(1 * time.Second)
+// 	defer ticker.Stop()
+// 	for {
+// 		select {
+// 		case <-ctx.Done():
+// 			return
+// 		case <-ticker.C:
+// 			m.processRetry(ctx)
+// 		}
+// 	}
+// }
 
-func (m *RedisReliabilityManager) processRetry(ctx context.Context) {
-	now := time.Now().Unix()
-	batchSize := 50
+// func (m *RedisReliabilityManager) processRetry(ctx context.Context) {
+// 	now := time.Now().Unix()
+// 	batchSize := 50
 
-	// 1. 从ZSet获取到期消息
-	msgIDStrs, err := m.rdb.ZRangeByScore(ctx, "pending:msgs", &redis.ZRangeBy{
-		Min:    "-inf",
-		Max:    strconv.FormatInt(now, 10),
-		Offset: 0,
-		Count:  int64(batchSize),
-	}).Result()
+// 	// 1. 从ZSet获取到期消息
+// 	msgIDStrs, err := m.rdb.ZRangeByScore(ctx, "pending:msgs", &redis.ZRangeBy{
+// 		Min:    "-inf",
+// 		Max:    strconv.FormatInt(now, 10),
+// 		Offset: 0,
+// 		Count:  int64(batchSize),
+// 	}).Result()
 
-	if err != nil && !errors.Is(err, redis.Nil) {
-		logger.Log.Errorf("获取需要重试的消息失败: %v", err)
-		return
-	}
+// 	if err != nil && !errors.Is(err, redis.Nil) {
+// 		logger.Log.Errorf("获取需要重试的消息失败: %v", err)
+// 		return
+// 	}
 
-	for _, msgIDStr := range msgIDStrs {
-		msgID, err := strconv.ParseInt(msgIDStr, 10, 64)
-		if err != nil {
-			logger.Log.Errorf("解析重试消息 ID 失败: %v", err)
-			continue
-		}
-		// 2. 生成分布式锁
-		lockKey := fmt.Sprintf("lock:msg:%d", msgID)
-		// 3. 尝试获取分布式锁
-		locked, err := m.rdb.SetNX(ctx, lockKey, "1", 30*time.Second).Result()
-		if err != nil {
-			logger.Log.Errorf("获取分布式锁失败: %v", err)
-			continue
-		}
-		if !locked {
-			// 已被其他实例获取，跳过
-			continue
-		}
+// 	for _, msgIDStr := range msgIDStrs {
+// 		msgID, err := strconv.ParseInt(msgIDStr, 10, 64)
+// 		if err != nil {
+// 			logger.Log.Errorf("解析重试消息 ID 失败: %v", err)
+// 			continue
+// 		}
+// 		// 2. 生成分布式锁
+// 		lockKey := fmt.Sprintf("lock:msg:%d", msgID)
+// 		// 3. 尝试获取分布式锁
+// 		locked, err := m.rdb.SetNX(ctx, lockKey, "1", 30*time.Second).Result()
+// 		if err != nil {
+// 			logger.Log.Errorf("获取分布式锁失败: %v", err)
+// 			continue
+// 		}
+// 		if !locked {
+// 			// 已被其他实例获取，跳过
+// 			continue
+// 		}
 
-		// 4. 原子删除ZSet中的消息
-		pipe := m.rdb.Pipeline()
-		zremCmd := pipe.ZRem(ctx, "pending:msgs", msgIDStr)
-		_, err = pipe.Exec(ctx)
-		if err != nil {
-			logger.Log.Errorf("删除 ZSet 消息失败: %v", err)
-			m.rdb.Del(ctx, lockKey)
-			continue
-		}
-		if zremCmd.Val() == 0 {
-			m.rdb.Del(ctx, lockKey)
-			continue
-		}
+// 		// 4. 原子删除ZSet中的消息
+// 		pipe := m.rdb.Pipeline()
+// 		zremCmd := pipe.ZRem(ctx, "pending:msgs", msgIDStr)
+// 		_, err = pipe.Exec(ctx)
+// 		if err != nil {
+// 			logger.Log.Errorf("删除 ZSet 消息失败: %v", err)
+// 			m.rdb.Del(ctx, lockKey)
+// 			continue
+// 		}
+// 		if zremCmd.Val() == 0 {
+// 			m.rdb.Del(ctx, lockKey)
+// 			continue
+// 		}
 
-		// 5. 获取消息详情
-		detailKey := pendingDetailKey(msgID)
-		msgJson, err := m.rdb.Get(ctx, detailKey).Result()
-		if err != nil {
-			if !errors.Is(err, redis.Nil) {
-				logger.Log.Errorf("获取待重试消息详情失败: %v", err)
-			}
-			continue
-		}
-		var msg PendingMessage
-		if err := json.Unmarshal([]byte(msgJson), &msg); err != nil {
-			logger.Log.Errorf("消息解析失败: %v", err)
-			continue
-		}
-		// 6. 处理消息
-		var processed bool
-		if m.retryCallback != nil {
-			processed = m.retryCallback(ctx, &msg)
-		} else {
-			logger.Log.Errorf("retryCallback 未设置，消息 %d 处理失败", msg.MsgID)
-			processed = false
-		}
+// 		// 5. 获取消息详情
+// 		detailKey := pendingDetailKey(msgID)
+// 		msgJson, err := m.rdb.Get(ctx, detailKey).Result()
+// 		if err != nil {
+// 			if !errors.Is(err, redis.Nil) {
+// 				logger.Log.Errorf("获取待重试消息详情失败: %v", err)
+// 			}
+// 			continue
+// 		}
+// 		var msg PendingMessage
+// 		if err := json.Unmarshal([]byte(msgJson), &msg); err != nil {
+// 			logger.Log.Errorf("消息解析失败: %v", err)
+// 			continue
+// 		}
+// 		// 6. 处理消息
+// 		var processed bool
+// 		if m.retryCallback != nil {
+// 			processed = m.retryCallback(ctx, &msg)
+// 		} else {
+// 			logger.Log.Errorf("retryCallback 未设置，消息 %d 处理失败", msg.MsgID)
+// 			processed = false
+// 		}
 
-		// 7. 根据处理结果更新状态
-		if processed {
-			// 处理成功，删除详情
-			if err := m.Ack(ctx, msg.MsgID); err != nil {
-				logger.Log.Errorf("ACK 处理失败: %v", err)
-			}
-		} else {
-			// 处理失败，更新重试信息
-			m.updateRetryInfo(ctx, &msg)
-		}
+// 		// 7. 根据处理结果更新状态
+// 		if processed {
+// 			// 处理成功，删除详情
+// 			if err := m.Ack(ctx, msg.MsgID); err != nil {
+// 				logger.Log.Errorf("ACK 处理失败: %v", err)
+// 			}
+// 		} else {
+// 			// 处理失败，更新重试信息
+// 			m.updateRetryInfo(ctx, &msg)
+// 		}
 
-		// 8. 释放锁
-		m.rdb.Del(ctx, lockKey)
-	}
-}
+// 		// 8. 释放锁
+// 		m.rdb.Del(ctx, lockKey)
+// 	}
+// }
 
-func (m *RedisReliabilityManager) updateRetryInfo(ctx context.Context, msg *PendingMessage) {
-	msg.RetryCount++
-	if msg.RetryCount > msg.MaxRetry {
-		m.moveToDLQ(ctx, msg)
-		return
-	}
-	backoff := m.config.InitialBackoff
-	for i := 0; i < msg.RetryCount; i++ {
-		backoff *= 2
-		// 超出最大退避时间
-		if backoff > m.config.MaxBackoff {
-			backoff = m.config.MaxBackoff
-			break
-		}
-	}
-	msg.Backoff = backoff
-	// 下次重试时间
-	msg.NextRetryAt = time.Now().Add(backoff)
+// func (m *RedisReliabilityManager) updateRetryInfo(ctx context.Context, msg *PendingMessage) {
+// 	msg.RetryCount++
+// 	if msg.RetryCount > msg.MaxRetry {
+// 		m.moveToDLQ(ctx, msg)
+// 		return
+// 	}
+// 	backoff := m.config.InitialBackoff
+// 	for i := 0; i < msg.RetryCount; i++ {
+// 		backoff *= 2
+// 		// 超出最大退避时间
+// 		if backoff > m.config.MaxBackoff {
+// 			backoff = m.config.MaxBackoff
+// 			break
+// 		}
+// 	}
+// 	msg.Backoff = backoff
+// 	// 下次重试时间
+// 	msg.NextRetryAt = time.Now().Add(backoff)
 
-	if err := m.AddPending(ctx, msg); err != nil {
-		logger.Log.Errorf("退避重新入队失败: %v", err)
-	}
-}
+// 	if err := m.AddPending(ctx, msg); err != nil {
+// 		logger.Log.Errorf("退避重新入队失败: %v", err)
+// 	}
+// }
 
 func (m *RedisReliabilityManager) moveToDLQ(ctx context.Context, msg *PendingMessage) {
 	logger.Log.Infof("Message moved to DLQ: %d, retry count: %d", msg.MsgID, msg.RetryCount)
@@ -286,9 +286,9 @@ func (m *RedisReliabilityManager) Ack(ctx context.Context, msgID int64) error {
 	return err
 }
 
-func (m *RedisReliabilityManager) SetRetryCallback(callback retryCallback) {
-	m.retryCallback = callback
-}
+// func (m *RedisReliabilityManager) SetRetryCallback(callback retryCallback) {
+// 	m.retryCallback = callback
+// }
 
 // onTransportDelivered 网关已成功 WriteMessage 后回调，用于将 DB send_status 0→1（可选）
 var onTransportDelivered func(ctx context.Context, senderID, msgID int64)
@@ -303,36 +303,36 @@ func (m *RedisReliabilityManager) GenerateMsgID(_ context.Context, _ string, _ i
 	return utils.GetSnowflake().Generate()
 }
 
-// retryPushToReceivers 默认重试：向在线接收方再次 WriteMessage（JSON）
-func retryPushToReceivers(ctx context.Context, msg *PendingMessage) bool {
-	payload, err := json.Marshal(map[string]interface{}{
-		"chat_type": "chat_push",
-		"msg_id":    msg.MsgID,
-		"seq_id":    msg.SeqID,
-		"from":      msg.SenderID,
-		"content":   msg.Content,
-	})
-	if err != nil {
-		return false
-	}
-	ok := true
-	for _, rid := range msg.ReceiverIDs {
-		client, exists := GlobalCliMap.Get(strconv.FormatInt(rid, 10))
-		if !exists {
-			ok = false
-			continue
-		}
-		client.SendMessage(payload)
-	}
-	if ok && onTransportDelivered != nil {
-		onTransportDelivered(ctx, msg.SenderID, msg.MsgID)
-	}
-	return ok
-}
+// // retryPushToReceivers 默认重试：向在线接收方再次 WriteMessage（JSON）
+// func retryPushToReceivers(ctx context.Context, msg *PendingMessage) bool {
+// 	payload, err := json.Marshal(map[string]interface{}{
+// 		"chat_type": "chat_push",
+// 		"msg_id":    msg.MsgID,
+// 		"seq_id":    msg.SeqID,
+// 		"from":      msg.SenderID,
+// 		"content":   msg.Content,
+// 	})
+// 	if err != nil {
+// 		return false
+// 	}
+// 	ok := true
+// 	for _, rid := range msg.ReceiverIDs {
+// 		client, exists := GlobalCliMap.Get(strconv.FormatInt(rid, 10))
+// 		if !exists {
+// 			ok = false
+// 			continue
+// 		}
+// 		client.SendMessage(payload)
+// 	}
+// 	if ok && onTransportDelivered != nil {
+// 		onTransportDelivered(ctx, msg.SenderID, msg.MsgID)
+// 	}
+// 	return ok
+// }
 
 // InitGatewayReliability 初始化默认管理器、回调并启动重试协程
-func InitGatewayReliability(ctx context.Context, cfg *ReliabilityConfig) {
+func InitGatewayReliability(cfg *ReliabilityConfig) {
 	DefaultReliability = NewRedisReliabilityManager(cfg)
-	DefaultReliability.SetRetryCallback(retryPushToReceivers)
-	go DefaultReliability.StartRetryLoop(ctx)
+	// DefaultReliability.SetRetryCallback(retryPushToReceivers)
+	// go DefaultReliability.StartRetryLoop(ctx)
 }

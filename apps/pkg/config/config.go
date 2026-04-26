@@ -14,11 +14,12 @@ var GlobalConfig *Config
 
 // Config 根配置结构体
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	MySQL  MySQLConfig  `mapstructure:"mysql"`
-	Redis  RedisConfig  `mapstructure:"redis"`
-	Agent  AgentConfig  `mapstructure:"agent"`
-	Log    LogConfig    `mapstructure:"log"`
+	Server   ServerConfig   `mapstructure:"server"`
+	MySQL    MySQLConfig    `mapstructure:"mysql"`
+	Redis    RedisConfig    `mapstructure:"redis"`
+	Agent    AgentConfig    `mapstructure:"agent"`
+	Log      LogConfig      `mapstructure:"log"`
+	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq"`
 }
 
 type ServerConfig struct {
@@ -39,6 +40,12 @@ type RedisConfig struct {
 	Addr     string `mapstructure:"addr"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
+}
+
+// RabbitMQConfig MQ 连接配置
+type RabbitMQConfig struct {
+	URL      string `mapstructure:"url"`      // AMQP 连接地址
+	Exchange string `mapstructure:"exchange"` // Exchange 名称，默认 gateway.exchange
 }
 
 // AgentConfig 一级结构体：管理默认Agent + 所有Agent提供商
