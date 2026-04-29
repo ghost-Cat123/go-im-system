@@ -7,3 +7,4 @@ logic.exe
 gateway.exe
 logs/system.log
 /apps/logic/sql/*.sql
+/perf/result_online.json

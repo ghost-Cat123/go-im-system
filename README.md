@@ -12,41 +12,23 @@
 - **分布式架构**：基于自建RPC框架的微服务架构，支持服务发现与负载均衡
 - **性能优化**：通过连接池、缓存等技术，保证系统低延迟运行
 
-## TODO List
-- **IM系统**
-  - [ ] **MQ网关层削峰**：网关收到后，不调用 RPC，不查数据库
-  - [ ] **MQ逻辑层填谷**：Logic满消费
-  - [x] **下行推拉结合**：用户在线/不在线处理
-  - [ ] **会话增强**：会话列表、最近会话置顶、消息已读回执、消息撤回
-  - [ ] **媒体传输**：图片 / 文件上传下载、富文本消息
-  - [ ] **高级群聊**：群成员管理、禁言、群公告、全员推送
-  - [ ] **分布式能力**：多节点长连接负载均衡、用户连接路由
-  - [ ] **运维稳定性**：接口限流、熔断、异常日志打点
-- **AI Agent系统**
-  - **双层记忆机制**
-    1. [x] **短期记忆**：滑动窗口 + 摘要压缩，防止上下文过长 
-    2. [ ] **长期记忆**：向量数据库存储历史对话，持久化回忆
-  - [ ] **RAG 检索增强**：接入私有文档，AI 能回答你的项目文档、技术笔记
-  - [ ] **扩展MCP能力**：简单联网查询、时间获取
-  - [ ] **会话隔离**：不同用户、不同聊天窗口 AI 上下文互不干扰
 
 ## 技术栈
 
-| 分类        | 技术                | 版本 | 用途        |
-|-----------|-------------------|------|-----------|
-| 后端语言      | Go                | 1.25.8 | 核心开发语言    |
-| Web框架     | Gin               | v1.12.0 | HTTP请求处理  |
-| WebSocket | gorilla/websocket | v1.5.3 | 实时消息传输    |
-| 数据库       | MySQL (GORM)      | v1.31.1 | 持久化存储     |
-| 缓存        | Redis             | v8.11.0 | 数据缓存、会话管理 |
-| 消息队列      | RabbitMQ          | v1.11.0 | 服务解耦、削峰填谷 |
-| 认证        | JWT               | v5.2.1 | 用户身份验证    |
-| 序列化       | Protocol Buffers  | v1.36.11 | 高效数据传输    |
-| 配置管理      | Viper             | v1.21.0 | 配置文件管理    |
-| 日志        | Zap               | v1.27.1 | 结构化日志     |
-| 定时任务      | cron              | v3.0.1 | 任务调度      |
-| 性能测试      | k6                | - | 系统压测      |
-| 自建RPC     | GrowRPC           | - | 服务间通信     |
+| 分类 | 技术 | 版本 | 用途 |
+|------|------|------|------|
+| 后端语言 | Go | 1.25.8 | 核心开发语言 |
+| Web框架 | Gin | v1.12.0 | HTTP请求处理 |
+| WebSocket | gorilla/websocket | v1.5.3 | 实时消息传输 |
+| 数据库 | MySQL (GORM) | v1.31.1 | 持久化存储 |
+| 缓存 | Redis | v8.11.0 | 数据缓存、会话管理 |
+| 认证 | JWT | v5.2.1 | 用户身份验证 |
+| 序列化 | Protocol Buffers | v1.36.11 | 高效数据传输 |
+| 配置管理 | Viper | v1.21.0 | 配置文件管理 |
+| 日志 | Zap | v1.27.1 | 结构化日志 |
+| 定时任务 | cron | v3.0.1 | 任务调度 |
+| 性能测试 | k6 | - | 系统压测 |
+| 自建RPC | geeRPC | - | 服务间通信 |
 
 
 ## 系统架构
@@ -56,7 +38,6 @@
    - 处理HTTP/WebSocket请求
    - 消息路由与转发
    - 连接管理与心跳检测
-   - MQ推拉消息解耦网关与逻辑层
 
 2. **逻辑层（Logic）**
    - 业务逻辑处理
@@ -82,7 +63,6 @@ go-im-system/
 │   │   │   ├── client.go     # 客户端管理
 │   │   │   ├── handler.go    # 消息处理
 │   │   │   ├── manager.go    # 连接管理
-│   │   │   ├── mq_consumer.go # mq消费推送
 │   │   │   └── reliability.go # 可靠性保障
 │   │   └── main.go       # 网关入口
 │   ├── logic/            # 逻辑服务
@@ -98,7 +78,6 @@ go-im-system/
 │       ├── db/           # 数据库连接
 │       ├── geeRPC/       # 自建RPC框架
 │       ├── logger/       # 日志工具
-|       ├── mq/           # 消息队列
 │       ├── proto/        # Protobuf定义
 │       └── utils/        # 工具函数
 ├── perf/                 # 性能测试
@@ -150,13 +129,13 @@ go-im-system/
 ### 执行测试
 ```bash
 # 在线单聊测试
-k6 run perf/k6/ws_online_chat.js -e VUS=100 -e DURATION=2m
+k6 run perf/k6/ws_online_chat.js -e VUS=50 -e DURATION=2m
 
 # 离线同步测试
-k6 run perf/k6/ws_offline_sync.js -e OFFLINE_BURST=10 -e VUS=100 -e DURATION=2m
+k6 run perf/k6/ws_offline_sync.js -e OFFLINE_BURST=10 -e VUS=10 -e DURATION=30s
 
 # AI流式输出测试
-k6 run perf/k6/ws_ai_stream.js -e VUS=10 -e DURATION=2m
+k6 run perf/k6/ws_ai_stream.js -e VUS=2 -e DURATION=30s
 ```
 
 ### 测试指标
@@ -169,7 +148,7 @@ k6 run perf/k6/ws_ai_stream.js -e VUS=10 -e DURATION=2m
 ## 核心功能模块
 
 ### 1. 消息可靠性保障
-- 基于MQ的消息可靠性保障
+- 基于时间的消息重试机制
 - 离线消息存储与同步
 - 消息状态跟踪与确认
 
@@ -224,3 +203,13 @@ k6 run perf/k6/ws_ai_stream.js -e VUS=10 -e DURATION=2m
 - **文件传输**：支持图片、文件等多媒体消息
 - **多端同步**：支持多设备登录与消息同步
 - **容器化部署**：提供Docker镜像与K8s部署方案
+
+
+## 贡献指南
+
+欢迎提交Issue和Pull Request，共同完善系统功能。
+
+
+## 许可证
+
+MIT License
