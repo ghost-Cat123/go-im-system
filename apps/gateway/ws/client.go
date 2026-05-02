@@ -152,7 +152,7 @@ func (c *Client) ReadPump() {
 		case "group_chat":
 			// handleGroupChat(userID, msgData)  // 调群聊函数
 		case "ack":
-			// 单级确认：已读 + send_status 置为「发送已确认」(2)，不单独维护投递 ACK
+			// 读取确认 已读 + send_status 置为「发送已确认」(2)
 			handleAck(c.Uid, msgData)
 		default:
 			logger.Log.Info("未知动作", baseReq.ChatType)

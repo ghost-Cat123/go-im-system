@@ -14,7 +14,7 @@ import (
 // gatewayAddr 示例: "127.0.0.1:8080"（与 Redis route:user:<id> 的值保持一致）
 func StartMQConsumer(gatewayAddr string) {
 	queueName := "gateway.queue." + gatewayAddr
-	msgs, err := mq.ConsumeQueue(queueName, gatewayAddr)
+	msgs, err := mq.ConsumeDownQueue(queueName, gatewayAddr)
 	if err != nil {
 		logger.Log.Fatalf("MQ 消费者启动失败: %v", err)
 	}
@@ -37,7 +37,7 @@ func consumeLoop(msgs <-chan amqp.Delivery) {
 //     若接收方已离线（如用户在消息发出和 MQ 到达之间断开），NACK 且不重入队；
 //     接收方上线时将通过 SyncUnread 拉取离线消息，无需 MQ 重试。
 func handleMQDelivery(d amqp.Delivery) {
-	var payload mq.PushPayload
+	var payload mq.DownPayload
 	if err := json.Unmarshal(d.Body, &payload); err != nil {
 		logger.Log.Errorf("[MQ] Payload 解析失败，丢弃消息: %v", err)
 		_ = d.Nack(false, false) // 解析失败，不重入队
@@ -49,8 +49,8 @@ func handleMQDelivery(d amqp.Delivery) {
 	if !ok {
 		// 接收方已不在本节点（可能已离线），NACK 且不重入队
 		// 离线消息已落库，用户上线时 SyncUnread 会推送
-		logger.Log.Warnf("[MQ] 用户 [%d] 已不在本节点，NACK 不重入队", payload.ReceiverID)
-		_ = d.Nack(false, false)
+		logger.Log.Warnf("[MQ] 用户 [%d] 已不在本节点，已落库 直接ACK", payload.ReceiverID)
+		_ = d.Ack(false)
 		return
 	}
 
@@ -69,7 +69,7 @@ func handleMQDelivery(d amqp.Delivery) {
 	logger.Log.Infof("[MQ] 消息推送成功: receiver=%d msgID=%d seqID=%d",
 		payload.ReceiverID, payload.MsgID, payload.SeqID)
 
-	// 通知 Logic 将 send_status 从 0（未发送）→ 1（已投递至网关 WS）
+	// 投递确认 send_status 从 0（未发送）→ 1（已投递至网关 WS）
 	if onTransportDelivered != nil {
 		go onTransportDelivered(context.Background(), payload.SenderID, payload.MsgID)
 	}

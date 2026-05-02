@@ -54,6 +54,9 @@ func main() {
 
 	task.StartCronJobs()
 
+	// 启动上行 MQ 消费者（Gateway → MQ → Logic，替代原 SendMessage RPC）
+	service.StartUploadConsumer()
+
 	GeeRPC.Use(midware.LoggerInterceptor, midware.RecoveryInterceptor)
 
 	_ = GeeRPC.Register(new(service.LogicService))

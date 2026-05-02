@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/cloudwego/eino-ext/components/model/deepseek"
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -60,12 +59,12 @@ func GetAgentGraphRunner() (*adk.Runner, error) {
 	// 注册全局chatModel and tools callbacks
 	callbacks.AppendGlobalHandlers(&callback.TraceLoggerCallback{})
 	// 创建Agent
-	agent, err := deep.New(ctx, &deep.Config{
-		Name:         "IM-System-Agent",
-		Description:  "DeepSeek Agent",
-		ChatModel:    cm,
-		Instruction:  instruction,
-		MaxIteration: 5,
+	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+		Name:          "IM-System-Agent",
+		Description:   "DeepSeek Agent",
+		Model:         cm,
+		Instruction:   instruction,
+		MaxIterations: 5,
 		Handlers: []adk.ChatModelAgentMiddleware{
 			&middleware.RateLimitMiddleware{},
 			&middleware.SafeAgentMiddleware{},

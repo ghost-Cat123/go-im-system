@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go-im-system/apps/pkg/mq"
 	"strconv"
 
 	"go-im-system/apps/gateway/rpcclient"
@@ -53,9 +54,9 @@ func handleSingleChat(senderId int64, msgData []byte) {
 	var msgID, seqID int64
 	var convID string
 
+	// 可靠性管理器：生成会话ID、消息ID、会话内序号
 	if DefaultReliability != nil {
 		convID = singleChatConvID(senderId, clientReq.Receiver)
-		// 获取会话内单调序号（Redis INCR，保证同会话内消息有序）
 		seq, err := DefaultReliability.GetNextSeqID(bgCtx, convID, senderId)
 		if err != nil {
 			logger.Log.Errorf("分配会话序号失败: %v", err)
@@ -65,32 +66,30 @@ func handleSingleChat(senderId int64, msgData []byte) {
 		msgID = DefaultReliability.GenerateMsgID(bgCtx, convID, seqID)
 	}
 
-	sendMessageArgs := &pb_msg.SendMessageArgs{
-		SenderId:   senderId,
-		ReceiverId: clientReq.Receiver,
-		Body:       clientReq.Message,
-		MsgId:      msgID,
-		SeqId:      seqID,
+	// 上行：网关不调RPC不查DB，生成MsgID后直推MQ
+	payload := mq.UploadPayload{
+		MsgID:      msgID,
+		SeqID:      seqID,
+		ConvID:     convID,
+		SenderID:   senderId,
+		ReceiverID: clientReq.Receiver,
+		Content:    clientReq.Message,
 	}
+	body, _ := json.Marshal(payload)
 
-	sendMessageReply := &pb_msg.SendMessageReply{}
-	routingKey := strconv.FormatInt(senderId, 10)
-	ctx := xclient.WithRoutingKey(context.Background(), routingKey)
-	err := rpcclient.LogicRpcClient.Call(ctx, "LogicService.SendMessage", sendMessageArgs, sendMessageReply)
-	if err != nil {
-		log.Printf("用户 [%d] 的消息发送失败: %v", senderId, err)
+	// 上行失败直接打日志 等待客户端重试
+	if pubErr := mq.PublishUpload(bgCtx, "upload.all", body); pubErr != nil {
+		logger.Log.Errorf("[Gateway] 上行Publish失败，客户端将触发重试: %v", pubErr)
 		return
 	}
 
-	// Logic 落库成功并已 Publish 到 RabbitMQ
-	// MQ 消费者（mq_consumer.go）将负责把消息推送给接收方的 WebSocket 连接
-	// 若接收方离线，消息已落库，上线时 SyncUnread 会自动拉取
-	finalMsgID := sendMessageReply.MsgId
-	if finalMsgID == 0 {
-		finalMsgID = msgID
+	// 给自己的ws发送server_ack
+	if senderClient, ok := GlobalCliMap.Get(strconv.FormatInt(senderId, 10)); ok {
+		ackMsg := fmt.Sprintf(`{"chat_type":"server_ack","msg_id":%d,"seq_id":%d}`, msgID, seqID)
+		senderClient.SendMessage([]byte(ackMsg))
 	}
-	logger.Log.Infof("[Gateway] RPC 成功，消息已委托 MQ 分发: sender=%d receiver=%d msgID=%d",
-		senderId, clientReq.Receiver, finalMsgID)
+	logger.Log.Infof("[Gateway] 上行Publish成功: sender=%d receiver=%d msgID=%d",
+		senderId, clientReq.Receiver, msgID)
 }
 
 func handleAck(userId int64, msgData []byte) {
