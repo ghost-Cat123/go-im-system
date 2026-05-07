@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"github.com/go-redis/redis/v8"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"go-im-system/apps/logic/agent"
 	"go-im-system/apps/logic/dao"
 	"go-im-system/apps/logic/models"
 	"go-im-system/apps/pkg/cache"
@@ -49,19 +47,18 @@ func handleUploadDelivery(d amqp.Delivery) {
 
 	logger.Log.Infof("[Upload] 收到上行消息: %d -> %d, msgID=%d", payload.SenderID, payload.ReceiverID, payload.MsgID)
 
-	// AI 和普通消息走统一入口，由 Logic 根据 receiver 分发
 	if payload.ReceiverID == -1 {
 		if err := handleAIChat(&payload); err != nil {
-			// DB写入失败重入队
 			_ = d.Nack(false, true)
+			return
 		}
 	} else {
 		if err := handleSingleChat(&payload); err != nil {
 			_ = d.Nack(false, true)
+			return
 		}
 	}
 
-	// 手动 ACK：消息已成功处理
 	_ = d.Ack(false)
 }
 
@@ -82,8 +79,8 @@ func handleSingleChat(payload *mq.UploadPayload) error {
 	redisKey := "route:user:" + strconv.FormatInt(payload.ReceiverID, 10)
 	gatewayAddr, err := cache.GetCache().Get(ctx, redisKey).Result()
 	if errors.Is(err, redis.Nil) {
-		return fmt.Errorf("[Upload] 用户 [%d] 离线，消息已落库", payload.ReceiverID)
-
+		logger.Log.Infof("[Upload] 用户 [%d] 离线，消息已落库", payload.ReceiverID)
+		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("[Upload] 查询 Redis 出错: %v", err)
@@ -120,7 +117,27 @@ func handleAIChat(payload *mq.UploadPayload) error {
 		return fmt.Errorf("[Upload] AI消息落库失败: %v", err)
 	}
 
-	// 异步处理 AI 对话（Eino Agent + Redis PubSub 流式推送）
-	go agent.HandlerAIMessage(payload.SenderID, payload.Content)
+	// // 异步处理 AI 对话（Eino Agent + Redis PubSub 流式推送）
+	// go func() {
+	// 	body := fmt.Sprintf(`{"user_id": %d, "message": "%s"}`, payload.SenderID, payload.Content)
+	// 	resp, err := http.Post(
+	// 		config.GlobalConfig.Server.AgentAddr+"/api/chat",
+	// 		"application/json",
+	// 		strings.NewReader(body),
+	// 	)
+	// 	if err != nil {
+	// 		logger.Log.Errorf("[Upload] 调用Agent服务失败: %v", err)
+	// 		return
+	// 	}
+	// 	err = resp.Body.Close()
+	// 	if err != nil {
+	// 		logger.Log.Errorf("[Upload] 关闭Agent请求失败: %v", err)
+	// 		return
+	// 	}
+	// 	if resp.StatusCode != http.StatusAccepted {
+	// 		logger.Log.Errorf("[Upload] Agent服务返回异常: %d", resp.StatusCode)
+	// 	}
+	// }()
+	// 落库成功，等待ACK
 	return nil
 }

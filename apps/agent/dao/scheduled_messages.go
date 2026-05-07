@@ -1,7 +1,7 @@
 package dao
 
 import (
-	"go-im-system/apps/logic/models"
+	"go-im-system/apps/agent/models"
 	"go-im-system/apps/pkg/db"
 	"go-im-system/apps/pkg/logger"
 	"gorm.io/gorm"
@@ -22,9 +22,11 @@ func GetPendingScheduledTasks(batch int) ([]models.ScheduledMessages, error) {
 
 func ClaimTask(schMsgId int64) (int64, error) {
 	result := db.GetDB().Model(&models.ScheduledMessages{}).
-		Where("sch_msg_id = ? AND state = ?", schMsgId, 0).
-		Update("status", 1).
-		Update("updated_time", time.Now())
+		Where("sch_msg_id = ? AND status = ?", schMsgId, 0).
+		Updates(map[string]interface{}{
+			"status":       1,
+			"updated_time": time.Now(),
+		})
 	return result.RowsAffected, result.Error
 }
 
@@ -39,7 +41,7 @@ func ExecuteSchSend(msg *models.Messages, schMsgId int64) error {
 		}
 		// 2. 修改定时消息表中消息的状态信息
 		if err := tx.Model(&models.ScheduledMessages{}).
-			Where("sch_msg_id = ? AND state = ?", schMsgId, 1).
+			Where("sch_msg_id = ? AND status = ?", schMsgId, 1).
 			Updates(map[string]interface{}{
 				"status":       2,
 				"updated_time": time.Now(),
@@ -55,7 +57,7 @@ func FailedTask(schMsgId int64, failReason string) {
 		Where("sch_msg_id = ? AND status = ?", schMsgId, 1).
 		Updates(map[string]interface{}{
 			"status":       3,
-			"fail_reason":  failReason, // 存入你的神级字段
+			"fail_reason":  failReason,
 			"updated_time": time.Now(),
 		}).Error
 	// 改状态出错 打印日志

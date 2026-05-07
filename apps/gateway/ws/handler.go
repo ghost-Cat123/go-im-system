@@ -4,7 +4,6 @@ import (
 	"GeeRPC/xclient"
 	"context"
 	"encoding/json"
-	"fmt"
 	"go-im-system/apps/gateway/rpcclient"
 	"go-im-system/apps/pkg/cache"
 	"go-im-system/apps/pkg/logger"
@@ -84,8 +83,8 @@ func Handler(c *gin.Context) {
 		return
 	}
 
-	// 7. 启动当前用户独立的Redis订阅流
-	go subscribeAILoop(userIDStr, client)
+	// // 7. 启动当前用户独立的Redis订阅流
+	// go subscribeAILoop(userIDStr, client)
 
 	// 8. 开启独立线程 处理该连接客户端消息
 	go client.ReadPump()
@@ -127,34 +126,34 @@ func syncMessage(userID int64, client *Client) error {
 	return err
 }
 
-func subscribeAILoop(userIDStr string, client *Client) {
-	ctx := context.Background()
-	// 频道名要和发布时一致
-	pubSubChannel := "ai:chunk:user:" + userIDStr
-	// 1. 开启订阅
-	pubSub := cache.GetCache().Subscribe(ctx, pubSubChannel)
-	if _, err := pubSub.Receive(ctx); err != nil {
-		logger.Log.Errorf("用户 [%s] 订阅 AI 频道失败: %v", userIDStr, err)
-		return
-	}
-	logger.Log.Infof("用户 [%s] 已订阅 AI 频道: %s", userIDStr, pubSubChannel)
-	// 2. 协程退出 关闭订阅 释放Redis连接
-	defer func() {
-		_ = pubSub.Close()
-		logger.Log.Infof("用户 [%s] 的 AI 订阅流已关闭", userIDStr)
-	}()
-	// 3. 阻塞监听频道消息
-	for msg := range pubSub.Channel() {
-		// 如果系统发出了关闭连接的信号 需要context通知 其他协程关闭
-		if msg.Payload == "[DONE]" {
-			// 给前端的
-			endMsg := `{"chat_type": "ai_end", "from": "-1", "content": ""}`
-			client.SendMessage([]byte(endMsg))
-			continue
-		}
-		// 收到普通文字 Chunk，组装成 JSON 推给前端
-		pushMsg := fmt.Sprintf(`{"chat_type": "ai_chunk", "from": "-1", "content": "%s"}`, msg.Payload)
-
-		client.SendMessage([]byte(pushMsg))
-	}
-}
+// func subscribeAILoop(userIDStr string, client *Client) {
+// 	ctx := context.Background()
+// 	// 频道名要和发布时一致
+// 	pubSubChannel := "ai:chunk:user:" + userIDStr
+// 	// 1. 开启订阅
+// 	pubSub := cache.GetCache().Subscribe(ctx, pubSubChannel)
+// 	if _, err := pubSub.Receive(ctx); err != nil {
+// 		logger.Log.Errorf("用户 [%s] 订阅 AI 频道失败: %v", userIDStr, err)
+// 		return
+// 	}
+// 	logger.Log.Infof("用户 [%s] 已订阅 AI 频道: %s", userIDStr, pubSubChannel)
+// 	// 2. 协程退出 关闭订阅 释放Redis连接
+// 	defer func() {
+// 		_ = pubSub.Close()
+// 		logger.Log.Infof("用户 [%s] 的 AI 订阅流已关闭", userIDStr)
+// 	}()
+// 	// 3. 阻塞监听频道消息
+// 	for msg := range pubSub.Channel() {
+// 		// 如果系统发出了关闭连接的信号 需要context通知 其他协程关闭
+// 		if msg.Payload == "[DONE]" {
+// 			// 给前端的
+// 			endMsg := `{"chat_type": "ai_end", "from": "-1", "content": ""}`
+// 			client.SendMessage([]byte(endMsg))
+// 			continue
+// 		}
+// 		// 收到普通文字 Chunk，组装成 JSON 推给前端
+// 		pushMsg := fmt.Sprintf(`{"chat_type": "ai_chunk", "from": "-1", "content": "%s"}`, msg.Payload)
+//
+// 		client.SendMessage([]byte(pushMsg))
+// 	}
+// }

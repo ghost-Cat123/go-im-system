@@ -1,12 +1,10 @@
 package task
 
 import (
-	"context"
 	"fmt"
 	"github.com/robfig/cron/v3"
-	"go-im-system/apps/logic/dao"
-	"go-im-system/apps/logic/models"
-	"go-im-system/apps/pkg/cache"
+	"go-im-system/apps/agent/dao"
+	"go-im-system/apps/agent/models"
 	"go-im-system/apps/pkg/logger"
 )
 
@@ -61,10 +59,6 @@ func SendSchMessages(task *models.ScheduledMessages) {
 	feedbackMsg := models.NewMessages(-1, task.CreatorId, feedback, false)
 	_ = dao.InsertMessage(feedbackMsg)
 
-	// 用Redis实时推送
-	ctx := context.Background()
-	pubSubChannel := fmt.Sprintf("ai:chunk:user:%d", task.CreatorId)
-
-	cache.GetCache().Publish(ctx, pubSubChannel, feedback)
-	cache.GetCache().Publish(ctx, pubSubChannel, "[DONE]")
+	logger.Log.Infof("[Task] 定时消息已发送: taskID=%d creator=%d receiver=%d",
+		task.SchMsgId, task.CreatorId, task.ReceiverId)
 }

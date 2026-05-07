@@ -25,9 +25,12 @@ type Config struct {
 type ServerConfig struct {
 	GatewayPort int `mapstructure:"gateway_port"`
 	LogicPort   int `mapstructure:"logic_port"`
+	AgentPort   int `mapstructure:"agent_port"`
 	// Snowflake 节点号 0–1023，网关与 Logic 必须使用不同值以避免 msg_id 冲突
-	GatewaySnowflakeNode int `mapstructure:"gateway_snowflake_node"`
-	LogicSnowflakeNode   int `mapstructure:"logic_snowflake_node"`
+	GatewaySnowflakeNode int    `mapstructure:"gateway_snowflake_node"`
+	LogicSnowflakeNode   int    `mapstructure:"logic_snowflake_node"`
+	AgentSnowflakeNode   int    `mapstructure:"agent_snowflake_node"` // 新增
+	AgentAddr            string `mapstructure:"agent_addr"`           // 方便logic调用
 }
 
 type MySQLConfig struct {
@@ -138,11 +141,11 @@ func GetDefaultAgent() ProviderConfig {
 	return config
 }
 
-// GetAgentByName 根据名称获取【指定Agent】配置（多Agent同时使用）
-func GetAgentByName(name string) ProviderConfig {
-	config, ok := GlobalConfig.Agent.Providers[name]
-	if !ok {
-		log.Fatalf("Agent %s 不存在", name)
-	}
-	return config
-}
+// // GetAgentByName 根据名称获取【指定Agent】配置（多Agent同时使用）
+// func GetAgentByName(name string) ProviderConfig {
+// 	config, ok := GlobalConfig.Agent.Providers[name]
+// 	if !ok {
+// 		log.Fatalf("Agent %s 不存在", name)
+// 	}
+// 	return config
+// }

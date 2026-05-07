@@ -40,9 +40,7 @@ func main() {
 	}
 
 	gwSnow := config.GlobalConfig.Server.GatewaySnowflakeNode
-	if gwSnow == 0 {
-		gwSnow = 1
-	}
+
 	if err := utils.InitSnowflake(int64(gwSnow)); err != nil {
 		logger.Log.Fatalf("网关 Snowflake 初始化失败: %v", err)
 	}

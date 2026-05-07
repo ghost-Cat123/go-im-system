@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/cloudwego/eino/components/tool"
 	toolutils "github.com/cloudwego/eino/components/tool/utils"
-	"go-im-system/apps/logic/dao"
+	"go-im-system/apps/agent/dao"
 	"go-im-system/apps/pkg/utils"
 )
 

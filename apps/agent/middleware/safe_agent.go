@@ -18,7 +18,7 @@ type SafeAgentMiddleware struct {
 }
 
 func (m *SafeAgentMiddleware) WrapModel(
-	ctx context.Context, baseModel model.BaseChatModel, _ *adk.ModelContext,
+	_ context.Context, baseModel model.BaseChatModel, _ *adk.ModelContext,
 ) (model.BaseChatModel, error) {
 	// 包装官方模型，重写 Call/Stream 方法，捕获模型错误
 	return &safeModelWrapper{model: baseModel}, nil

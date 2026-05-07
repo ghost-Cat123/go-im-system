@@ -4,7 +4,6 @@ import (
 	"GeeRPC"
 	"GeeRPC/midware"
 	"go-im-system/apps/logic/service"
-	"go-im-system/apps/logic/task"
 	"go-im-system/apps/pkg/cache"
 	"go-im-system/apps/pkg/config"
 	"go-im-system/apps/pkg/db"
@@ -39,9 +38,7 @@ func main() {
 	}
 
 	logicSnow := config.GlobalConfig.Server.LogicSnowflakeNode
-	if logicSnow == 0 {
-		logicSnow = 2
-	}
+
 	if err := utils.InitSnowflake(int64(logicSnow)); err != nil {
 		logger.Log.Fatalf("Logic Snowflake 初始化失败: %v", err)
 	}
@@ -51,8 +48,6 @@ func main() {
 		logger.Log.Fatalf("初始化 RabbitMQ 失败: %v", mqErr)
 	}
 	defer mq.Close()
-
-	task.StartCronJobs()
 
 	// 启动上行 MQ 消费者（Gateway → MQ → Logic，替代原 SendMessage RPC）
 	service.StartUploadConsumer()

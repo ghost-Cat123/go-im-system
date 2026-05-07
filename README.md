@@ -1,100 +1,145 @@
 # Go-IM-System
 
-基于Go语言开发的分布式微服务即时通讯系统，支持实时消息、离线同步、AI流式输出等核心功能，具备高可靠性、低延迟的特性。
-
+基于 Go 开发的分布式微服务即时通讯系统，支持实时消息、离线同步、AI 流式输出，具备削峰填谷的高可靠性消息链路。
 
 ## 项目特性
 
-- **实时通讯**：基于WebSocket的实时消息传输，支持单聊场景
-- **离线消息**：用户离线时消息存储，上线后自动同步
-- **AI集成**：支持AI流式输出，实时推送AI生成内容
-- **高可靠性**：实现消息重试机制，确保消息100%送达
-- **分布式架构**：基于自建RPC框架的微服务架构，支持服务发现与负载均衡
-- **性能优化**：通过连接池、缓存等技术，保证系统低延迟运行
+- **实时通讯**：基于 WebSocket 的实时消息传输，支持单聊
+- **离线消息**：用户离线时消息落库，上线后自动同步
+- **AI 流式输出**：AI Agent 独立微服务，原生 SSE 流式推送，不丢帧
+- **削峰填谷**：全链路 RabbitMQ 异步解耦，网关不查 DB 不调 RPC，M 级并发无压力
+- **消息可靠性**：消息持久化 + 手动 ACK + 死信队列，保证每条消息可追溯
+- **分布式架构**：Gateway / Logic / Agent 三服务，自建 geeRPC + 服务发现 + 一致性哈希
 
 ## TODO List
-为了打造分布式高并发的AI Agent IM，GrowRPC 正在执行以下升级演进路线：
 
-- [x] **全面接入MQ保证消息可靠性**：利用RabbitMQ替代原手工队列，保证上行下行消息可靠性 同时进行**削峰填谷**
-- [ ] **拆分Agent微服务**：将Agent从Logic服务中剥离，将流式输出从Redis订阅机制替换为原生SSE
-- [ ] **写扩散群聊消息**：实现群聊功能 进行消息扩散 依旧走消息队列削峰
-- [ ] **基于群聊扩充AI功能**：添加多种适用与群聊的tools,负责任务通过图编排进行 意图流转 实现复杂逻辑
+- [x] **全面接入 MQ 保证消息可靠性**：上行下行独立 Exchange，削峰填谷，DLX 死信兜底
+- [x] **拆分 Agent 微服务**：Agent 独立部署，流式输出从 Redis PubSub 替换为原生 SSE
+- [x] **SSE 流式推送**：Gateway 直连 Agent SSE 端点，TCP 长连接替代 fire-and-forget
+- [ ] **写扩散群聊消息**：群聊写扩散，共用上行 MQ 削峰
+- [ ] **基于群聊扩充 AI 功能**：群聊 tools + 意图流转 + Eino Graph 编排
 
 ## 技术栈
 
 | 分类 | 技术 | 版本 | 用途 |
 |------|------|------|------|
-| 后端语言 | Go | 1.25.8 | 核心开发语言 |
-| Web框架 | Gin | v1.12.0 | HTTP请求处理 |
+| 语言 | Go | 1.25.8 | 核心开发 |
+| Web 框架 | Gin | v1.12.0 | HTTP / SSE 端点 |
 | WebSocket | gorilla/websocket | v1.5.3 | 实时消息传输 |
-| 数据库 | MySQL (GORM) | v1.31.1 | 持久化存储 |
-| 缓存 | Redis | v8.11.0 | 数据缓存、会话管理 |
-| 认证 | JWT | v5.2.1 | 用户身份验证 |
-| 序列化 | Protocol Buffers | v1.36.11 | 高效数据传输 |
-| 配置管理 | Viper | v1.21.0 | 配置文件管理 |
-| 日志 | Zap | v1.27.1 | 结构化日志 |
-| 定时任务 | cron | v3.0.1 | 任务调度 |
-| 性能测试 | k6 | - | 系统压测 |
-| 自建RPC | geeRPC | - | 服务间通信 |
-
+| 消息队列 | RabbitMQ (amqp091-go) | v1.11.0 | 上行下行削峰、死信队列 |
+| 数据库 | MySQL + GORM | v1.31.1 | 消息 / 用户持久化 |
+| 缓存 | Redis | v8.11.0 | 在线路由表、AI 会话记忆 |
+| AI 框架 | Eino (cloudwego) | v0.8.5 | AI Agent 编排、工具调用、流式推理 |
+| AI 模型 | DeepSeek (eino-ext) | v0.1.2 | ChatModel |
+| 认证 | JWT | v5.2.1 | 用户鉴权 |
+| 序列化 | Protocol Buffers | v1.36.11 | RPC 传输 |
+| 配置 | Viper | v1.21.0 | YAML 配置管理 |
+| 日志 | Zap + Lumberjack | v1.27.1 | 结构化日志 + 滚动归档 |
+| 定时任务 | cron | v3.0.1 | 预约消息调度 |
+| 自建 RPC | geeRPC | — | 服务间通信 + 负载均衡 |
 
 ## 系统架构
 
-### 三层架构设计
-1. **网关层（Gateway）**
-   - 处理HTTP/WebSocket请求
-   - 消息路由与转发
-   - 连接管理与心跳检测
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        客户端 (WebSocket)                    │
+└──────┬────────────────────────────────────────────────┬─────┘
+       │                                                │
+       ▼                                                ▼
+┌──────────────┐  MQ Upload   ┌──────────────┐  SSE    ┌──────────────┐
+│   Gateway    │ ───────────▶ │    Logic     │ ◀───── │    Agent     │
+│   :8080      │              │    :8001     │  HTTP   │    :8050     │
+│              │ ◀─────────── │              │         │              │
+│  Gin + WS    │  MQ Down     │  GeeRPC      │         │  Gin + SSE   │
+│  连接管理     │              │  落库 + 路由  │         │  Eino + AI   │
+│  消息路由     │              │  SyncUnread  │         │  session记忆  │
+│  心跳检测     │              │  ACK/已读    │         │  定时消息     │
+└──────────────┘              └──────────────┘         └──────────────┘
+       │                              │                        │
+       └──────────────────────────────┴────────────────────────┘
+                            MySQL    Redis    RabbitMQ
+```
 
-2. **逻辑层（Logic）**
-   - 业务逻辑处理
-   - 消息存储与检索
-   - AI能力集成
+### 三服务职责
 
-3. **数据层**
-   - MySQL：持久化存储用户信息、消息历史
-   - Redis：缓存热点数据、管理在线状态
+| 服务 | 端口 | 通信 | 不做什么 |
+|------|------|------|---------|
+| Gateway | 8080 | Gin HTTP + WS, MQ, RPC | 不查 DB、不处理业务逻辑 |
+| Logic | 8001 | GeeRPC, MQ 消费 | 不做 AI 推理 |
+| Agent | 8050 | Gin HTTP + SSE | 不碰 MQ、不参与消息路由 |
 
+### 消息流程
+
+**普通消息**：
+```
+Client WS → Gateway(生成MsgID) → MQ Upload → Logic(落库+查路由)
+  → MQ Down → 目标Gateway → WS push → 接收方
+```
+
+**AI 消息**：
+```
+Client WS → Gateway(生成MsgID, MQ Upload → Logic落库)
+  → SSE GET /agent/chat/sse → Agent(Eino推理)
+  → SSE stream → Gateway逐chunk推WS → 发送方
+  Agent异步落库AI回复 + 更新Redis session
+```
 
 ## 目录结构
 
 ```
-go-im-system/
-├── apps/
-│   ├── gateway/          # 网关服务
-│   │   ├── api/          # HTTP API处理
-│   │   ├── router/       # 路由配置
-│   │   ├── rpcclient/    # RPC客户端
-│   │   ├── ws/           # WebSocket处理
-│   │   │   ├── chat.go       # 聊天逻辑
-│   │   │   ├── client.go     # 客户端管理
-│   │   │   ├── handler.go    # 消息处理
-│   │   │   ├── manager.go    # 连接管理
-│   │   │   └── reliability.go # 可靠性保障
-│   │   └── main.go       # 网关入口
-│   ├── logic/            # 逻辑服务
-│   │   ├── agent/        # 业务代理
-│   │   ├── dao/          # 数据访问
-│   │   ├── models/       # 数据模型
-│   │   ├── service/      # 业务服务
-│   │   ├── task/         # 定时任务
-│   │   └── main.go       # 逻辑服务入口
-│   └── pkg/              # 公共包
-│       ├── cache/        # 缓存工具
-│       ├── config/       # 配置管理
-│       ├── db/           # 数据库连接
-│       ├── geeRPC/       # 自建RPC框架
-│       ├── logger/       # 日志工具
-│       ├── proto/        # Protobuf定义
-│       └── utils/        # 工具函数
-├── perf/                 # 性能测试
-│   ├── k6/               # k6压测脚本
-│   └── README.md         # 压测说明
-├── go.mod                # Go模块定义
-├── go.sum                # 依赖版本锁定
-└── package.json          # 前端依赖（如有）
+apps/
+├── config.yaml              # 统一配置
+├── gateway/                 # 网关服务
+│   ├── main.go
+│   ├── api/user_api/        # REST 登录/注册
+│   ├── router/              # 路由注册 + CORS
+│   ├── rpcclient/           # GeeRPC 客户端
+│   └── ws/                  # WebSocket 核心
+│       ├── chat.go          # 单聊 + AI聊天 + ACK
+│       ├── client.go        # WS 客户端读写泵
+│       ├── handler.go       # WS 升级 + 未读同步
+│       ├── manager.go       # 全局连接池 (CliMap)
+│       ├── mq_consumer.go   # 下行 MQ 消费
+│       └── reliability.go   # SeqID / MsgID 生成
+├── logic/                   # 业务逻辑服务
+│   ├── main.go
+│   ├── dao/                 # 数据层 (仅Logic相关)
+│   ├── models/              # 数据模型
+│   └── service/
+│       ├── chat_service.go  # RPC (SyncUnread/Ack/Delivered)
+│       ├── upload_consumer.go # 上行 MQ 消费 + 下行发布
+│       └── user_service.go  # RPC (Login/Register)
+├── agent/                   # AI Agent 独立服务
+│   ├── main.go
+│   ├── handler/
+│   │   └── chat_sse.go      # SSE 流式端点
+│   ├── engine/
+│   │   ├── engine.go        # PrepareAgentContext + 流事件解析
+│   │   └── graph.go         # Eino Graph 编排
+│   ├── memory/
+│   │   └── memory.go        # Redis Session 记忆
+│   ├── dao/                 # Agent 独立数据层
+│   ├── models/              # Agent 独立模型
+│   ├── tools/               # AI Tools
+│   │   ├── schedule_message.go
+│   │   └── search_chat_history.go
+│   ├── middleware/           # 限流 + 安全兜底
+│   │   ├── rate_limit.go
+│   │   └── safe_agent.go
+│   ├── callback/
+│   │   └── trace_logger.go  # Token / TTFT 追踪
+│   └── task/
+│       └── schedule_msg.go  # 预约消息 Cron
+└── pkg/                     # 共享基础设施
+    ├── cache/               # Redis 单例
+    ├── config/              # Viper 配置
+    ├── db/                  # MySQL GORM 单例
+    ├── geeRPC/              # 自建 RPC 框架
+    ├── logger/              # Zap 日志
+    ├── mq/                  # RabbitMQ 连接 + 发布/消费
+    ├── proto/               # pb_msg / pb_user
+    └── utils/               # JWT / Bcrypt / Snowflake
 ```
-
 
 ## 快速开始
 
@@ -102,121 +147,81 @@ go-im-system/
 - Go 1.25.8+
 - MySQL 5.7+
 - Redis 6.0+
-- k6（可选，用于性能测试）
+- RabbitMQ 3.12+
 
-### 配置文件
-1. 复制配置模板并修改为实际环境配置
-2. 确保数据库连接信息正确
+### 配置
+修改 `apps/config.yaml` 中 MySQL DSN、Redis 地址密码、RabbitMQ URL、Agent API Key。
 
-### 启动服务
-1. **启动逻辑服务**
-   ```bash
-   cd apps/logic
-   go run main.go
-   ```
+### 启动服务（按顺序，三个终端）
 
-2. **启动网关服务**
-   ```bash
-   cd apps/gateway
-   go run main.go
-   ```
+```bash
+# 1. Logic
+cd apps/logic && go run main.go
 
-### API接口
-- **WebSocket连接**：`ws://localhost:8080/ws`
-- **HTTP接口**：`http://localhost:8080/api`
+# 2. Agent
+cd apps/agent && go run main.go
 
+# 3. Gateway
+cd apps/gateway && go run main.go
+```
+
+### 接口
+
+| 接口 | 说明 |
+|------|------|
+| `POST /api/login` | 用户登录，获取 JWT |
+| `POST /api/register` | 用户注册 |
+| `WS /ws?token=xxx` | WebSocket 长连接 |
+| `GET /agent/chat/sse?user_id=&message=` | Agent SSE 流式端点 |
+
+### WebSocket 协议
+
+| chat_type | 方向 | 说明 |
+|-----------|------|------|
+| `single_chat` | Client → Server | 发送消息（receiver=-1 走 AI） |
+| `chat_push` | Server → Client | 收到新消息 |
+| `ai_chunk` | Server → Client | AI 流式 chunk |
+| `ai_end` | Server → Client | AI 回复结束 |
+| `server_ack` | Server → Client | 消息已被 MQ 接受 |
+| `sync_unread` | Server → Client | 上线同步未读消息 |
+| `ack` | Client → Server | 已读回执（双向） |
+| `ping` / `pong` | 双向 | 心跳 |
+
+## 可靠性保障
+
+```
+链路                    保障机制
+─────────────────────────────────────────
+Gateway PublishUpload   → 失败打日志，客户端超时重试
+MQ 持久化               → amqp.Persistent
+Logic 消费崩溃          → 手动 ACK，消息重回队列
+Logic 消费解析失败      → Nack → 死信队列
+Logic 落库后 PublishDown → 即使失败已在 DB，SyncUnread 兜底
+Gateway 下行消费        → 消息已落库，ACK 不重入队
+接收方离线              → DB 保底 + SyncUnread 全量拉取
+```
 
 ## 性能测试
 
-### 测试场景
-- **在线单聊**：实时消息转发性能
-- **离线同步**：离线消息堆积后同步性能
-- **AI流式输出**：AI生成内容的流式传输性能
-
-### 执行测试
 ```bash
-# 在线单聊测试
+# 在线单聊
 k6 run perf/k6/ws_online_chat.js -e VUS=50 -e DURATION=2m
 
-# 离线同步测试
-k6 run perf/k6/ws_offline_sync.js -e OFFLINE_BURST=10 -e VUS=10 -e DURATION=30s
-
-# AI流式输出测试
+# AI 流式输出
 k6 run perf/k6/ws_ai_stream.js -e VUS=2 -e DURATION=30s
 ```
 
-### 测试指标
-- **端到端延迟**：消息从发送到接收的时间
-- **同步成功率**：消息成功同步的比例
-- **消息数量**：同步的离线消息数量
-- **AI响应时间**：AI首次响应和完整响应时间
+## 部署
 
+### 单机
+三个 `go run` 即可。
 
-## 核心功能模块
+### 分布式
+- **Gateway**：多实例 + 负载均衡，每个实例独立 Queue（`gateway.queue.<addr>`）
+- **Logic**：多实例竞争消费 `logic.upload.queue`（天然负载均衡）
+- **Agent**：可独立扩缩容，无状态（session 存 Redis）
+- **MySQL/Redis/RabbitMQ**：建议集群 / 主从部署
 
-### 1. 消息可靠性保障
-- 基于时间的消息重试机制
-- 离线消息存储与同步
-- 消息状态跟踪与确认
+## License
 
-### 2. WebSocket连接管理
-- 连接建立与心跳检测
-- 客户端状态管理
-- 连接池优化
-
-### 3. AI集成
-- AI流式输出支持
-- 智能消息处理
-- 实时AI响应
-
-### 4. 自建RPC框架
-- 服务发现与负载均衡
-- 多种序列化支持（JSON、GOB、Protobuf）
-- 连接池与超时控制
-
-
-## 部署说明
-
-### 单机部署
-适合开发与测试环境，直接启动逻辑服务和网关服务即可。
-
-### 分布式部署
-1. **逻辑服务**：可部署多个实例，通过服务发现实现负载均衡
-2. **网关服务**：可部署多个实例，通过负载均衡器分发请求
-3. **数据库**：建议使用主从架构，确保高可用
-4. **Redis**：建议使用集群模式，提高缓存可靠性
-
-
-## 监控与维护
-
-### 日志管理
-- 使用Zap日志框架，支持结构化日志
-- 日志级别可配置，便于问题排查
-
-### 性能监控
-- 建议集成Prometheus + Grafana，监控系统指标
-- 关注指标：QPS、延迟、错误率、CPU/内存使用率
-
-### 常见问题
-- **消息丢失**：检查消息重试机制是否正常工作
-- **连接断开**：检查网络环境与心跳机制
-- **性能下降**：检查数据库查询与缓存使用情况
-
-
-## 未来规划
-
-- **群聊功能**：支持多人聊天场景
-- **消息加密**：端到端加密保障消息安全
-- **文件传输**：支持图片、文件等多媒体消息
-- **多端同步**：支持多设备登录与消息同步
-- **容器化部署**：提供Docker镜像与K8s部署方案
-
-
-## 贡献指南
-
-欢迎提交Issue和Pull Request，共同完善系统功能。
-
-
-## 许可证
-
-MIT License
+MIT

@@ -2,11 +2,16 @@ package ws
 
 import (
 	"GeeRPC/xclient"
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"go-im-system/apps/pkg/config"
 	"go-im-system/apps/pkg/mq"
+	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"go-im-system/apps/gateway/rpcclient"
 	"go-im-system/apps/pkg/logger"
@@ -48,7 +53,6 @@ func handleSingleChat(senderId int64, msgData []byte) {
 		logger.Log.Errorf("JSON解析失败: %v", err)
 		return
 	}
-	logger.Log.Infof("[Gateway] 收到 single_chat: sender=%d receiver=%d body=%s", senderId, clientReq.Receiver, clientReq.Message)
 
 	bgCtx := context.Background()
 	var msgID, seqID int64
@@ -90,6 +94,83 @@ func handleSingleChat(senderId int64, msgData []byte) {
 	}
 	logger.Log.Infof("[Gateway] 上行Publish成功: sender=%d receiver=%d msgID=%d",
 		senderId, clientReq.Receiver, msgID)
+}
+
+func handlerAIChat(senderId int64, msgData []byte) {
+	var clientReq ClientRequest
+	if err := json.Unmarshal(msgData, &clientReq); err != nil {
+		logger.Log.Errorf("JSON解析失败: %v", err)
+		return
+	}
+	bgCtx := context.Background()
+
+	// 生成AI对话专属MsgID
+	convID := fmt.Sprintf("ai_%d", senderId)
+	var msgID, seqID int64
+
+	// 可靠性管理器：生成会话ID、消息ID、会话内序号
+	if DefaultReliability != nil {
+		seq, err := DefaultReliability.GetNextSeqID(bgCtx, convID, senderId)
+		if err != nil {
+			logger.Log.Errorf("分配会话序号失败: %v", err)
+			return
+		}
+		seqID = seq
+		msgID = DefaultReliability.GenerateMsgID(bgCtx, convID, seqID)
+	}
+
+	// 包装用户提问走MQ上行 Logic中异步落库
+	payload := mq.UploadPayload{
+		MsgID:      msgID,
+		SeqID:      seqID,
+		ConvID:     convID,
+		SenderID:   senderId,
+		ReceiverID: -1,
+		Content:    clientReq.Message,
+	}
+	body, _ := json.Marshal(payload)
+	if pubErr := mq.PublishUpload(bgCtx, "upload.all", body); pubErr != nil {
+		logger.Log.Errorf("[Gateway] AI上行Publish失败: %v", pubErr)
+		return
+	}
+	// 服务端ACK
+	if senderClient, ok := GlobalCliMap.Get(strconv.FormatInt(senderId, 10)); ok {
+		ackMsg := fmt.Sprintf(`{"chat_type":"server_ack","msg_id":%d,"seq_id":%d}`, msgID, seqID)
+		senderClient.SendMessage([]byte(ackMsg))
+	}
+
+	// SSE直连Agent，按chunk推送给网关
+	agentURL := fmt.Sprintf("%s/agent/chat/sse?user_id=%d&message=%s",
+		config.GlobalConfig.Server.AgentAddr, senderId, url.QueryEscape(clientReq.Message))
+	resp, err := http.Get(agentURL)
+	if err != nil {
+		logger.Log.Errorf("[Gateway] 连接 Agent SSE 失败: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	senderClient, ok := GlobalCliMap.Get(strconv.FormatInt(senderId, 10))
+	if !ok {
+		// 离线直接返回 AI消息已落库兜底
+		return
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// 结束符
+		if line == "data: [DONE]" {
+			senderClient.SendMessage([]byte(`{"chat_type":"ai_end","from":"-1"}`))
+			return
+		}
+		// 消息
+		if strings.HasPrefix(line, "data: ") {
+			// 去除前缀
+			chunk := strings.TrimPrefix(line, "data: ")
+			msg := fmt.Sprintf(`{"chat_type":"ai_chunk","from":"-1","content":"%s"}`, chunk)
+			// 发送消息
+			senderClient.SendMessage([]byte(msg))
+		}
+	}
 }
 
 func handleAck(userId int64, msgData []byte) {

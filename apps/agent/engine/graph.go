@@ -1,4 +1,4 @@
-package agent
+package engine
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
-	"go-im-system/apps/logic/agent/callback"
-	"go-im-system/apps/logic/agent/middleware"
-	"go-im-system/apps/logic/agent/tools"
+	"go-im-system/apps/agent/callback"
+	"go-im-system/apps/agent/middleware"
+	"go-im-system/apps/agent/tools"
 	"go-im-system/apps/pkg/config"
 	"go-im-system/apps/pkg/logger"
 	"os"
@@ -37,7 +37,7 @@ func resolveAgentAPIKey(defaultAgent config.ProviderConfig) string {
 	return ""
 }
 
-func GetAgentGraphRunner() (*adk.Runner, error) {
+func GetAgentGraphRunner(ctx context.Context) (*adk.Runner, error) {
 	defaultAgent := config.GetDefaultAgent()
 	instruction := "You are a helpful assistant."
 	apiKey := resolveAgentAPIKey(defaultAgent)
@@ -45,7 +45,6 @@ func GetAgentGraphRunner() (*adk.Runner, error) {
 		return nil, fmt.Errorf("AI API Key 为空，请在 apps/config.yaml 填写 agent.providers.%s.api_key 或设置环境变量 DEEPSEEK_API_KEY", config.GlobalConfig.Agent.Default)
 	}
 
-	ctx := context.Background()
 	// 配置ChatModel
 	cm, err := deepseek.NewChatModel(ctx, &deepseek.ChatModelConfig{
 		APIKey:  apiKey,
