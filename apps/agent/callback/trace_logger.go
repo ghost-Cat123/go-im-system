@@ -89,7 +89,7 @@ func (c *TraceLoggerCallback) OnEndWithStreamOutput(ctx context.Context, info *c
 	return ctx
 }
 
-func (c *TraceLoggerCallback) OnStart(ctx context.Context, info *callbacks.RunInfo, input callbacks.CallbackInput) context.Context {
+func (c *TraceLoggerCallback) OnStart(ctx context.Context, info *callbacks.RunInfo, _ callbacks.CallbackInput) context.Context {
 	// 将当前时间注入 Context 传递给后续生命周期
 	// 区分不同组件，注入不同的 StartTime，绝对防撞车
 	if info.Component == components.ComponentOfChatModel {
