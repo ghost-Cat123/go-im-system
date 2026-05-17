@@ -37,12 +37,13 @@ func singleChatConvID(a, b int64) string {
 	return fmt.Sprintf("%d_%d", a, b)
 }
 
-func marshalChatPush(msgID, seqID, from int64, content string) ([]byte, error) {
+func marshalChatPush(msgID, seqID, groupID, from int64, content string) ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"chat_type": "chat_push",
 		"msg_id":    msgID,
 		"seq_id":    seqID,
 		"from":      from,
+		"group_id":  groupID,
 		"content":   content,
 	})
 }
@@ -63,7 +64,7 @@ func handleSingleChat(senderId int64, msgData []byte) {
 		convID = singleChatConvID(senderId, clientReq.Receiver)
 		seq, err := DefaultReliability.GetNextSeqID(bgCtx, convID, senderId)
 		if err != nil {
-			logger.Log.Errorf("分配会话序号失败: %v", err)
+			logger.Log.Errorf("单聊分配会话序号失败: %v", err)
 			return
 		}
 		seqID = seq
@@ -74,6 +75,8 @@ func handleSingleChat(senderId int64, msgData []byte) {
 	payload := mq.UploadPayload{
 		MsgID:      msgID,
 		SeqID:      seqID,
+		ChatType:   mq.ChatTypeSingle,
+		GroupID:    0,
 		ConvID:     convID,
 		SenderID:   senderId,
 		ReceiverID: clientReq.Receiver,
@@ -94,6 +97,51 @@ func handleSingleChat(senderId int64, msgData []byte) {
 	}
 	logger.Log.Infof("[Gateway] 上行Publish成功: sender=%d receiver=%d msgID=%d",
 		senderId, clientReq.Receiver, msgID)
+}
+
+func handleGroupChat(senderId int64, msgData []byte) {
+	var clientReq ClientRequest
+	if err := json.Unmarshal(msgData, &clientReq); err != nil {
+		logger.Log.Errorf("JSON解析失败: %v", err)
+		return
+	}
+	bgCtx := context.Background()
+	var msgID, seqID int64
+	// 群聊 ConvID 格式：group_{group_id}
+	convID := fmt.Sprintf("group_%d", clientReq.GroupID)
+	// 可靠性管理器：生成消息ID、会话内序号
+	if DefaultReliability != nil {
+		seq, err := DefaultReliability.GetNextSeqID(bgCtx, convID, senderId)
+		if err != nil {
+			logger.Log.Errorf("群聊分配会话序号失败: %v", err)
+			return
+		}
+		seqID = seq
+		msgID = DefaultReliability.GenerateMsgID(bgCtx, convID, seqID)
+	}
+	// 组装群聊上行payload
+	payload := mq.UploadPayload{
+		MsgID:      msgID,
+		SeqID:      seqID,
+		ChatType:   mq.ChatTypeGroup,
+		GroupID:    clientReq.GroupID,
+		ConvID:     convID,
+		SenderID:   senderId,
+		ReceiverID: clientReq.Receiver,
+		Content:    clientReq.Message,
+	}
+	body, _ := json.Marshal(payload)
+
+	if pubErr := mq.PublishUpload(bgCtx, "upload.all", body); pubErr != nil {
+		logger.Log.Errorf("[Gateway] 群聊上行 Publish 失败: %v", pubErr)
+		return
+	}
+
+	// 立即给发送者返回 server_ack
+	if senderClient, ok := GlobalCliMap.Get(strconv.FormatInt(senderId, 10)); ok {
+		ackMsg := fmt.Sprintf(`{"chat_type":"server_ack","msg_id":%d,"seq_id":%d}`, msgID, seqID)
+		senderClient.SendMessage([]byte(ackMsg))
+	}
 }
 
 func handlerAIChat(senderId int64, msgData []byte) {
@@ -123,6 +171,8 @@ func handlerAIChat(senderId int64, msgData []byte) {
 	payload := mq.UploadPayload{
 		MsgID:      msgID,
 		SeqID:      seqID,
+		ChatType:   mq.ChatTypeAI,
+		GroupID:    0,
 		ConvID:     convID,
 		SenderID:   senderId,
 		ReceiverID: -1,

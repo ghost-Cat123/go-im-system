@@ -29,8 +29,9 @@ type ServerConfig struct {
 	// Snowflake 节点号 0–1023，网关与 Logic 必须使用不同值以避免 msg_id 冲突
 	GatewaySnowflakeNode int    `mapstructure:"gateway_snowflake_node"`
 	LogicSnowflakeNode   int    `mapstructure:"logic_snowflake_node"`
-	AgentSnowflakeNode   int    `mapstructure:"agent_snowflake_node"` // 新增
-	AgentAddr            string `mapstructure:"agent_addr"`           // 方便logic调用
+	AgentSnowflakeNode   int    `mapstructure:"agent_snowflake_node"`
+	AgentAddr            string `mapstructure:"agent_addr"`   // Logic 调用 Agent 的地址
+	GatewayAddr          string `mapstructure:"gateway_addr"` // Gateway 对外地址（Docker 用 gateway:8080）
 }
 
 type MySQLConfig struct {
